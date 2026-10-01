@@ -5,60 +5,43 @@
 import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:musicplayer/src/now_playing_bar.dart';
-import 'package:musicplayer/src/rust/api/library.dart';
 import 'package:musicplayer/src/rust/api/player.dart';
 
-/// 假曲目时长（进度条按它算总长）。
-const int _durationMs = 200000;
+import 'fixtures.dart';
 
-Track _track({int id = 7, int durationMs = _durationMs}) => Track(
-  id: id,
-  path: '/storage/emulated/0/Music/test.mp3',
-  title: '测试曲目',
-  artist: '某位歌手',
-  album: '某张专辑',
-  durationMs: durationMs,
-  sizeBytes: 1024,
-  modifiedAt: 0,
-  hasCover: false,
-  addedAt: 0,
-);
-
-PlayerSnapshot _snapshot({
-  int trackId = 7,
-  int positionMs = 0,
-  PlayerState state = PlayerState.playing,
-  RepeatMode repeat = RepeatMode.off,
-}) => PlayerSnapshot(
-  state: state,
-  positionMs: positionMs,
-  index: 0,
-  queueLen: 1,
-  trackId: trackId,
-  repeat: repeat,
-);
-
-/// 循环按钮：四个按钮里唯一 tooltip 以「循环」开头的那个。
+/// 循环按钮：按钮里唯一 tooltip 以「循环」开头的那个。
 IconButton _repeatButton(WidgetTester tester) =>
     tester.widgetList<IconButton>(find.byType(IconButton)).firstWhere(
       (button) => (button.tooltip ?? '').startsWith('循环'),
     );
 
-/// 曲库页接线的最小骨架。
-Widget _harness({required PlayerSnapshot snapshot, required List<int> seeked}) =>
-    MaterialApp(
-      home: Scaffold(
-        bottomNavigationBar: NowPlayingBar(
-          snapshot: snapshot,
-          track: snapshot.trackId == 0 ? null : _track(id: snapshot.trackId),
-          onToggle: () {},
-          onNext: () {},
-          onPrevious: () {},
-          onSeek: seeked.add,
-          onCycleRepeat: () {},
-        ),
-      ),
+/// 随机播放按钮：唯一 tooltip 以「随机播放」开头的那个。
+IconButton _shuffleButton(WidgetTester tester) =>
+    tester.widgetList<IconButton>(find.byType(IconButton)).firstWhere(
+      (button) => (button.tooltip ?? '').startsWith('随机播放'),
     );
+
+/// 曲库页接线的最小骨架。
+Widget _harness({
+  required PlayerSnapshot snapshot,
+  required List<int> seeked,
+  VoidCallback? onOpenPlayer,
+  VoidCallback? onToggleShuffle,
+}) => MaterialApp(
+  home: Scaffold(
+    bottomNavigationBar: NowPlayingBar(
+      snapshot: snapshot,
+      track: snapshot.trackId == 0 ? null : fakeTrack(id: snapshot.trackId),
+      onToggle: () {},
+      onNext: () {},
+      onPrevious: () {},
+      onSeek: seeked.add,
+      onCycleRepeat: () {},
+      onToggleShuffle: onToggleShuffle ?? () {},
+      onOpenPlayer: onOpenPlayer ?? () {},
+    ),
+  ),
+);
 
 double _sliderValue(WidgetTester tester) =>
     tester.widget<Slider>(find.byType(Slider)).value;
@@ -74,7 +57,7 @@ void main() {
   testWidgets('松手后锁在目标位置，不会先弹回旧位置', (tester) async {
     final seeked = <int>[];
     await tester.pumpWidget(
-      _harness(snapshot: _snapshot(positionMs: 10000), seeked: seeked),
+      _harness(snapshot: fakeSnapshot(positionMs: 10000), seeked: seeked),
     );
     expect(_sliderValue(tester), 10000);
 
@@ -85,17 +68,17 @@ void main() {
 
     // 关键时序：跳转后的前两次轮询还是旧位置（引擎尚未追上）。
     await tester.pumpWidget(
-      _harness(snapshot: _snapshot(positionMs: 10100), seeked: seeked),
+      _harness(snapshot: fakeSnapshot(positionMs: 10100), seeked: seeked),
     );
     expect(_sliderValue(tester), 120000, reason: '引擎没追上时不能弹回旧位置');
     await tester.pumpWidget(
-      _harness(snapshot: _snapshot(positionMs: 10150), seeked: seeked),
+      _harness(snapshot: fakeSnapshot(positionMs: 10150), seeked: seeked),
     );
     expect(_sliderValue(tester), 120000);
 
     // 引擎追上（精确跳转落在包边界上，允许差一点）：交还给轮询值。
     await tester.pumpWidget(
-      _harness(snapshot: _snapshot(positionMs: 119800), seeked: seeked),
+      _harness(snapshot: fakeSnapshot(positionMs: 119800), seeked: seeked),
     );
     expect(_sliderValue(tester), 119800, reason: '追上后应显示真实位置');
   });
@@ -103,7 +86,7 @@ void main() {
   testWidgets('跳转一直不生效时会把控制权还回去', (tester) async {
     final seeked = <int>[];
     await tester.pumpWidget(
-      _harness(snapshot: _snapshot(positionMs: 10000), seeked: seeked),
+      _harness(snapshot: fakeSnapshot(positionMs: 10000), seeked: seeked),
     );
 
     _tapSlider(tester, 120000);
@@ -113,7 +96,7 @@ void main() {
     // 引擎始终停在原地：连续几次轮询之后必须认账，不能一直锁着骗用户。
     for (var i = 0; i < 6; i++) {
       await tester.pumpWidget(
-        _harness(snapshot: _snapshot(positionMs: 10000), seeked: seeked),
+        _harness(snapshot: fakeSnapshot(positionMs: 10000), seeked: seeked),
       );
     }
     expect(_sliderValue(tester), 10000, reason: '追不上就该显示真实位置');
@@ -122,7 +105,7 @@ void main() {
   testWidgets('换到下一首后不再锁着旧的跳转目标', (tester) async {
     final seeked = <int>[];
     await tester.pumpWidget(
-      _harness(snapshot: _snapshot(positionMs: 10000), seeked: seeked),
+      _harness(snapshot: fakeSnapshot(positionMs: 10000), seeked: seeked),
     );
 
     _tapSlider(tester, 120000);
@@ -131,7 +114,7 @@ void main() {
 
     // 自动续播到下一首：位置回到 0，进度条必须跟着走。
     await tester.pumpWidget(
-      _harness(snapshot: _snapshot(trackId: 8, positionMs: 0), seeked: seeked),
+      _harness(snapshot: fakeSnapshot(trackId: 8, positionMs: 0), seeked: seeked),
     );
     expect(_sliderValue(tester), 0);
   });
@@ -139,7 +122,7 @@ void main() {
   testWidgets('拖动过程中轮询值不会把滑块抢走', (tester) async {
     final seeked = <int>[];
     await tester.pumpWidget(
-      _harness(snapshot: _snapshot(positionMs: 10000), seeked: seeked),
+      _harness(snapshot: fakeSnapshot(positionMs: 10000), seeked: seeked),
     );
 
     tester.widget<Slider>(find.byType(Slider)).onChanged!(60000);
@@ -148,7 +131,7 @@ void main() {
 
     // 还没松手就来了一次轮询：仍然跟手。
     await tester.pumpWidget(
-      _harness(snapshot: _snapshot(positionMs: 10500), seeked: seeked),
+      _harness(snapshot: fakeSnapshot(positionMs: 10500), seeked: seeked),
     );
     expect(_sliderValue(tester), 60000);
     expect(seeked, isEmpty, reason: '没松手就不该跳转');
@@ -160,7 +143,7 @@ void main() {
     // 所以：关闭 / 列表循环用 Icons.repeat，单曲循环用 Icons.repeat_one，
     // 靠颜色区分开与关。
     Future<void> pump(RepeatMode mode) => tester.pumpWidget(
-      _harness(snapshot: _snapshot(repeat: mode), seeked: <int>[]),
+      _harness(snapshot: fakeSnapshot(repeat: mode), seeked: <int>[]),
     );
 
     IconData iconOf(WidgetTester tester) =>
@@ -178,11 +161,54 @@ void main() {
     expect(_repeatButton(tester).color, isNotNull, reason: '开启时点亮图标');
   });
 
+  testWidgets('随机播放按钮：开关共用同一个图标，开启时点亮', (tester) async {
+    // 与循环按钮同一个坑：Icons.shuffle_on(0xE5A2) 在随 Flutter 打包的
+    // MaterialIcons 里没有字形（渲染成实心方块），所以开 / 关共用
+    // Icons.shuffle，靠颜色与提示区分。
+    Future<void> pump(bool shuffle) => tester.pumpWidget(
+      _harness(snapshot: fakeSnapshot(shuffle: shuffle), seeked: <int>[]),
+    );
+
+    await pump(false);
+    expect((_shuffleButton(tester).icon as Icon).icon, Icons.shuffle);
+    expect(_shuffleButton(tester).color, isNull, reason: '关闭时用默认的前景色');
+    expect(_shuffleButton(tester).tooltip, '随机播放：关（点击开启）');
+
+    await pump(true);
+    expect((_shuffleButton(tester).icon as Icon).icon, Icons.shuffle);
+    expect(_shuffleButton(tester).color, isNotNull, reason: '开启时点亮图标');
+    expect(_shuffleButton(tester).tooltip, '随机播放：开（点击关闭）');
+  });
+
+  testWidgets('点标题区域打开播放界面；没有曲目时点不动', (tester) async {
+    var opened = 0;
+    await tester.pumpWidget(
+      _harness(
+        snapshot: fakeSnapshot(positionMs: 10000),
+        seeked: <int>[],
+        onOpenPlayer: () => opened += 1,
+      ),
+    );
+    await tester.tap(find.text('测试曲目'));
+    expect(opened, 1, reason: '点标题应该打开全屏播放界面');
+
+    // 停止状态（trackId 为 0）时播放条上没有曲目可看，点标题不该跳转。
+    await tester.pumpWidget(
+      _harness(
+        snapshot: fakeSnapshot(trackId: 0),
+        seeked: <int>[],
+        onOpenPlayer: () => opened += 1,
+      ),
+    );
+    await tester.tap(find.text('没有在播放'));
+    expect(opened, 1, reason: '没有曲目时不该打开播放界面');
+  });
+
   testWidgets('暂停状态下跳转也能锁住目标位置', (tester) async {
     final seeked = <int>[];
     await tester.pumpWidget(
       _harness(
-        snapshot: _snapshot(positionMs: 10000, state: PlayerState.paused),
+        snapshot: fakeSnapshot(positionMs: 10000, state: PlayerState.paused),
         seeked: seeked,
       ),
     );
@@ -192,7 +218,7 @@ void main() {
     // 暂停时引擎位置本来就不动，只能靠上一次的位置判断：先不要弹回去。
     await tester.pumpWidget(
       _harness(
-        snapshot: _snapshot(positionMs: 10000, state: PlayerState.paused),
+        snapshot: fakeSnapshot(positionMs: 10000, state: PlayerState.paused),
         seeked: seeked,
       ),
     );
@@ -201,7 +227,7 @@ void main() {
     // 引擎把位置挪到目标附近（暂停状态下的跳转结果）。
     await tester.pumpWidget(
       _harness(
-        snapshot: _snapshot(positionMs: 29800, state: PlayerState.paused),
+        snapshot: fakeSnapshot(positionMs: 29800, state: PlayerState.paused),
         seeked: seeked,
       ),
     );

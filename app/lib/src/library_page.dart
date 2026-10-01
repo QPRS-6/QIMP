@@ -6,8 +6,10 @@ import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:musicplayer/src/app_info.dart';
 import 'package:musicplayer/src/now_playing_bar.dart';
 import 'package:musicplayer/src/playback_service.dart';
+import 'package:musicplayer/src/player_page.dart';
 import 'package:musicplayer/src/rust/api/library.dart';
 import 'package:musicplayer/src/rust/api/player.dart';
+import 'package:musicplayer/src/sleep_timer.dart';
 import 'package:musicplayer/src/storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -55,9 +57,15 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   /// 立刻取到的快照还是旧位置（进度条那边会先把目标锁住）。
   Timer? _seekCatchUp;
 
+  /// 定时播放（睡眠定时）。放在这一层而不是全屏播放界面里：
+  /// 退出播放界面之后倒计时还得继续走。
+  late final SleepTimer _sleepTimer;
+
   @override
   void initState() {
     super.initState();
+    // 定时播放：到点暂停而不是停止——醒来后再点一下播放就能接着听。
+    _sleepTimer = SleepTimer(onFire: () => _runPlayerAction(playerPause));
     WidgetsBinding.instance.addObserver(this);
     _bootstrap();
   }
@@ -67,6 +75,7 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
     _seekCatchUp?.cancel();
+    _sleepTimer.dispose();
     _player.dispose();
     _search.dispose();
     super.dispose();
@@ -223,6 +232,38 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
     _runPlayerAction(() => playerSetRepeat(mode: next));
   }
 
+  /// 随机播放开关。
+  ///
+  /// 与循环模式是两个独立的维度：随机决定「下一首是谁」，循环决定「一轮放完怎么办」，
+  /// 两者可以同时生效（例如「随机 + 列表循环」＝ 每轮随机打乱、放完再重开一轮）。
+  void _toggleShuffle() {
+    final current = _player.value?.shuffle ?? false;
+    _runPlayerAction(() => playerSetShuffle(shuffle: !current));
+  }
+
+  /// 打开全屏播放界面。
+  ///
+  /// 页面本身不持有播放状态：把同一个快照通知器与操作回调传进去，
+  /// 于是它与底部播放条永远显示同一个状态、点哪边的按钮都算数。
+  void _openPlayer() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PlayerPage(
+          player: _player,
+          trackById: _trackById,
+          onToggle: () => _runPlayerAction(playerToggle, ensureService: true),
+          onNext: () => _runPlayerAction(playerNext, ensureService: true),
+          onPrevious: () =>
+              _runPlayerAction(playerPrevious, ensureService: true),
+          onSeek: _seekTo,
+          onCycleRepeat: _cycleRepeat,
+          onToggleShuffle: _toggleShuffle,
+          sleepTimer: _sleepTimer,
+        ),
+      ),
+    );
+  }
+
   /// 按 id 在当前列表里找曲目（底部播放条显示标题用）。
   ///
   /// 列表被搜索过滤后可能找不到正在播放的那首，此时退回缓存的那一份。
@@ -310,6 +351,8 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
           onPrevious: () => _runPlayerAction(playerPrevious, ensureService: true),
           onSeek: _seekTo,
           onCycleRepeat: _cycleRepeat,
+          onToggleShuffle: _toggleShuffle,
+          onOpenPlayer: _openPlayer,
         ),
       ),
     );

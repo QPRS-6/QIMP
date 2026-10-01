@@ -41,7 +41,9 @@ pub fn track_title() -> String {
 
 /// 当前曲目的艺术家；没有标签时返回空串。
 pub fn track_artist() -> String {
-    current_track().and_then(|track| track.artist).unwrap_or_default()
+    current_track()
+        .and_then(|track| track.artist)
+        .unwrap_or_default()
 }
 
 /// 当前曲目时长（毫秒）；查不到返回 0（通知栏据此不显示进度）。

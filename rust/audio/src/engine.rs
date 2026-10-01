@@ -6,7 +6,7 @@
 //!   就退化成普通的同步代码，不需要满屏的原子变量和锁。
 //! - FFI 侧只读 [`Shared`] 里的原子快照，永远不阻塞播放线程。
 
-use std::sync::atomic::{AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -204,6 +204,9 @@ pub struct PlayerSnapshot {
     /// 当前曲目在曲库里的 id（`0` 表示没有）。UI 用它回查标题/艺术家。
     pub track_id: i64,
     pub repeat: RepeatMode,
+    /// 随机播放开关。它与 `repeat` 是两个独立的维度：随机决定「下一首是谁」，
+    /// 循环决定「一轮放完怎么办」。
+    pub shuffle: bool,
     /// 最近一次错误信息；`None` 表示一切正常。
     pub error: Option<String>,
 }
@@ -217,6 +220,7 @@ struct Shared {
     queue_len: AtomicUsize,
     track_id: AtomicI64,
     repeat: AtomicU8,
+    shuffle: AtomicBool,
     error: Mutex<Option<String>>,
 }
 
@@ -262,6 +266,8 @@ enum Command {
     Rewind,
     Seek(u64),
     SetRepeat(RepeatMode),
+    /// 打开 / 关闭随机播放。
+    SetShuffle(bool),
     Quit,
 }
 
@@ -352,6 +358,11 @@ impl Engine {
         self.send(Command::SetRepeat(mode))
     }
 
+    /// 打开 / 关闭随机播放。只影响「下一首是谁」，不改变当前正在放的那首。
+    pub fn set_shuffle(&self, on: bool) -> Result<()> {
+        self.send(Command::SetShuffle(on))
+    }
+
     /// 读取当前状态快照；不阻塞播放线程。
     pub fn snapshot(&self) -> PlayerSnapshot {
         PlayerSnapshot {
@@ -361,6 +372,7 @@ impl Engine {
             queue_len: self.shared.queue_len.load(Ordering::Relaxed) as u32,
             track_id: self.shared.track_id.load(Ordering::Relaxed),
             repeat: repeat_from_u8(self.shared.repeat.load(Ordering::Relaxed)),
+            shuffle: self.shared.shuffle.load(Ordering::Relaxed),
             error: self.shared.error.lock().ok().and_then(|slot| slot.clone()),
         }
     }
@@ -578,6 +590,7 @@ fn handle_command(
             }
         }
         Command::SetRepeat(mode) => queue.set_repeat(mode),
+        Command::SetShuffle(on) => queue.set_shuffle(on),
     }
 }
 
@@ -589,6 +602,7 @@ fn publish(shared: &Shared, state: PlayerState, queue: &PlayQueue, session: Opti
     shared
         .repeat
         .store(repeat_to_u8(queue.repeat()), Ordering::Relaxed);
+    shared.shuffle.store(queue.shuffle(), Ordering::Relaxed);
     match session {
         Some(current) => {
             shared
@@ -784,6 +798,53 @@ mod tests {
             engine.snapshot()
         );
         assert_eq!(engine.snapshot().position_ms, 0, "停止后位置应归零");
+    }
+
+    /// 随机播放：打开开关后「下一首」会换到别的曲目（而不是下一首顺序上的那一首），
+    /// 开关状态也出现在快照里。
+    #[test]
+    fn shuffle_next_moves_to_another_track() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+        engine
+            .replace_queue(
+                vec![
+                    wav_item(temp.path(), "a.wav", 30, 1),
+                    wav_item(temp.path(), "b.wav", 30, 2),
+                    wav_item(temp.path(), "c.wav", 30, 3),
+                ],
+                0,
+                true,
+            )
+            .expect("入队并播放");
+        assert!(pump_until(&output, 3_000, || engine.snapshot().state
+            == PlayerState::Playing));
+
+        engine.set_shuffle(true).expect("打开随机播放");
+        assert!(
+            pump_until(&output, 2_000, || engine.snapshot().shuffle),
+            "开关应出现在快照里：{:?}",
+            engine.snapshot()
+        );
+
+        engine.next().expect("下一首");
+        assert!(
+            pump_until(&output, 2_000, || engine.snapshot().track_id != 1),
+            "随机播放不该留在同一首上：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(
+            engine.snapshot().state,
+            PlayerState::Playing,
+            "换歌之后应该继续播放"
+        );
+
+        engine.set_shuffle(false).expect("关闭随机播放");
+        assert!(
+            pump_until(&output, 2_000, || !engine.snapshot().shuffle),
+            "关掉之后快照应回到关闭状态"
+        );
     }
 
     /// 暂停后位置冻结，恢复后继续前进。

@@ -14,6 +14,13 @@ pub mod library;
 #[cfg(target_os = "android")]
 pub mod native;
 
+/// 原生侧（Android 前台服务 / 通知栏）要的播放信息与操作。
+///
+/// 这一层是喂给 JNI 的（见 [`native`]），Dart 侧的接口在 [`player`]。
+/// 之所以是 `pub`：`native` 与它同属一个 crate，原本不需要公开；
+/// 但模块也参与 flutter_rust_bridge 的扫描，保持 `pub` 是为了不引入
+/// 「哪些模块会被扫」这种隐式规则（代价是 codegen 会多生成一份
+/// `lib/src/rust/api/playback_bridge.dart`，那份 Dart 接口没有调用方）。
 pub mod playback_bridge;
 
 pub mod player;

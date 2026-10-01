@@ -7,8 +7,17 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `with_db`
+// These functions are ignored because they are not marked as `pub`: `track_or_none`, `with_db`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `SortOrder`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`
+
+/// 一首歌的封面：内嵌图优先，其次同目录的 `cover.jpg` / `folder.jpg` 等约定文件名
+/// （判断规则都在 core 的 `metadata::read_cover` 里）。
+///
+/// 曲库没打开、id 不存在、没有封面、文件读不出来——统统返回 `None`：
+/// 界面上退化成一张占位图就够了，不该因为一张图让播放界面报错。
+Future<CoverData?> trackCover({required int trackId}) =>
+    RustLib.instance.api.crateApiLibraryTrackCover(trackId: trackId);
 
 /// Android 上常见的音乐目录，**只返回真实存在的那些**，UI 可直接拿来当扫描根。
 ///
@@ -121,6 +130,25 @@ class Artist {
           name == other.name &&
           trackCount == other.trackCount &&
           albumCount == other.albumCount;
+}
+
+/// 封面图：Dart 侧直接把它喂给 `Image.memory`，所以只带 mime 与原始字节。
+class CoverData {
+  final String mime;
+  final Uint8List data;
+
+  const CoverData({required this.mime, required this.data});
+
+  @override
+  int get hashCode => mime.hashCode ^ data.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CoverData &&
+          runtimeType == other.runtimeType &&
+          mime == other.mime &&
+          data == other.data;
 }
 
 /// [`musicplayer_core::ScanMode`] 的镜像。

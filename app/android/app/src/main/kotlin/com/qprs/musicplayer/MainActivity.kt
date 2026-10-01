@@ -3,6 +3,7 @@ package com.qprs.musicplayer
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -47,9 +48,38 @@ class MainActivity : FlutterActivity() {
                         startPlaybackService()
                         result.success(null)
                     }
+                    // 音量：走**系统媒体音量**（音乐流），而不是 App 内部增益。
+                    // 这样侧键、系统音量条、其它 App 看到的都是同一个数值，
+                    // 不会出现“App 里拉满了但手机其实只有一点声”的错乱。
+                    "getMusicVolume" -> result.success(musicVolume())
+                    "adjustMusicVolume" -> {
+                        val steps = call.argument<Int>("steps") ?: 0
+                        result.success(adjustMusicVolume(steps))
+                    }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /** 当前音乐流音量（0..1）。 */
+    private fun musicVolume(): Double {
+        val audio = getSystemService(AudioManager::class.java) ?: return 0.0
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        return audio.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / max
+    }
+
+    /** 按格增减音乐流音量，返回调整后的比例（0..1）。 */
+    private fun adjustMusicVolume(steps: Int): Double {
+        val audio = getSystemService(AudioManager::class.java) ?: return 0.0
+        if (steps != 0) {
+            audio.adjustStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                if (steps > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
+                // 让系统把音量条显示出来：用户划一下就有反馈，不必我们再画一套。
+                AudioManager.FLAG_SHOW_UI,
+            )
+        }
+        return musicVolume()
     }
 
     /**

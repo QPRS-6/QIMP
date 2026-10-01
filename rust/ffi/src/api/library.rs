@@ -41,6 +41,29 @@ pub(crate) fn track_or_none(id: i64) -> Option<Track> {
         .flatten()
 }
 
+/// 封面图：Dart 侧直接把它喂给 `Image.memory`，所以只带 mime 与原始字节。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverData {
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
+/// 一首歌的封面：内嵌图优先，其次同目录的 `cover.jpg` / `folder.jpg` 等约定文件名
+/// （判断规则都在 core 的 `metadata::read_cover` 里）。
+///
+/// 曲库没打开、id 不存在、没有封面、文件读不出来——统统返回 `None`：
+/// 界面上退化成一张占位图就够了，不该因为一张图让播放界面报错。
+pub fn track_cover(track_id: i64) -> Option<CoverData> {
+    let track = track_or_none(track_id)?;
+    let cover = musicplayer_core::metadata::read_cover(&track.path)
+        .ok()
+        .flatten()?;
+    Some(CoverData {
+        mime: cover.mime,
+        data: cover.data,
+    })
+}
+
 /// Android 上常见的音乐目录，**只返回真实存在的那些**，UI 可直接拿来当扫描根。
 ///
 /// 目录给的是真实路径而不是 SAF 的 `content://`：核心的扫描器基于 `std::fs`，
@@ -265,6 +288,8 @@ mod tests {
         let music = temp.path().join("Music");
         std::fs::create_dir_all(&music).expect("建音乐目录");
         write_wav(&music.join("demo.wav"), 2);
+        // 同目录放一张封面：core 的封面查找规则（内嵌图 → 约定文件名）里后者更容易造。
+        std::fs::write(music.join("cover.jpg"), [0xFF, 0xD8, 0xFF, 0x00]).expect("写封面");
 
         let db_path = temp.path().join("library.db");
         open_library(db_path.to_string_lossy().to_string()).expect("打开曲库");
@@ -292,6 +317,12 @@ mod tests {
         let stats = library_stats().expect("统计");
         assert_eq!(stats.track_count, 1);
         assert!(stats.total_duration_ms >= 1900);
+
+        // 封面：同目录的 cover.jpg 应该能取到（MIME 由 core 按魔数嗅探）。
+        let cover = track_cover(tracks[0].id).expect("有 cover.jpg 时应该能取到封面");
+        assert_eq!(cover.mime, "image/jpeg");
+        assert_eq!(cover.data, [0xFF, 0xD8, 0xFF, 0x00]);
+        assert!(track_cover(999_999).is_none(), "不存在的 id 应返回 None");
 
         let again = scan_library(vec![root], ScanMode::Incremental).expect("增量再扫");
         assert_eq!(again.added, 0, "增量扫描不该重复入库：{again:?}");

@@ -103,6 +103,13 @@ pub fn player_set_repeat(mode: RepeatMode) -> Result<(), String> {
     engine()?.set_repeat(mode).map_err(|e| e.to_string())
 }
 
+/// 打开 / 关闭随机播放。与循环模式相互独立：随机决定「下一首是谁」，
+/// 循环决定「一轮放完怎么办」。
+#[frb(sync)]
+pub fn player_set_shuffle(shuffle: bool) -> Result<(), String> {
+    engine()?.set_shuffle(shuffle).map_err(|e| e.to_string())
+}
+
 /// 读取播放状态快照。UI 定时调用它刷新进度与状态。
 #[frb(sync)]
 pub fn player_snapshot() -> Result<PlayerSnapshot, String> {
@@ -146,5 +153,6 @@ pub struct _PlayerSnapshot {
     pub queue_len: u32,
     pub track_id: i64,
     pub repeat: RepeatMode,
+    pub shuffle: bool,
     pub error: Option<String>,
 }

@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `engine`
+// These functions are ignored because they are not marked as `pub`: `engine`, `snapshot_or_none`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
 
 /// 打开音频设备并启动播放线程。App 启动时调用一次，重复调用是安全的。
@@ -43,6 +43,11 @@ void playerSeek({required int positionMs}) =>
 void playerSetRepeat({required RepeatMode mode}) =>
     RustLib.instance.api.crateApiPlayerPlayerSetRepeat(mode: mode);
 
+/// 打开 / 关闭随机播放。与循环模式相互独立：随机决定「下一首是谁」，
+/// 循环决定「一轮放完怎么办」。
+void playerSetShuffle({required bool shuffle}) =>
+    RustLib.instance.api.crateApiPlayerPlayerSetShuffle(shuffle: shuffle);
+
 /// 读取播放状态快照。UI 定时调用它刷新进度与状态。
 PlayerSnapshot playerSnapshot() =>
     RustLib.instance.api.crateApiPlayerPlayerSnapshot();
@@ -55,6 +60,7 @@ class PlayerSnapshot {
   final int queueLen;
   final int trackId;
   final RepeatMode repeat;
+  final bool shuffle;
   final String? error;
 
   const PlayerSnapshot({
@@ -64,6 +70,7 @@ class PlayerSnapshot {
     required this.queueLen,
     required this.trackId,
     required this.repeat,
+    required this.shuffle,
     this.error,
   });
 
@@ -75,6 +82,7 @@ class PlayerSnapshot {
       queueLen.hashCode ^
       trackId.hashCode ^
       repeat.hashCode ^
+      shuffle.hashCode ^
       error.hashCode;
 
   @override
@@ -88,6 +96,7 @@ class PlayerSnapshot {
           queueLen == other.queueLen &&
           trackId == other.trackId &&
           repeat == other.repeat &&
+          shuffle == other.shuffle &&
           error == other.error;
 }
 
