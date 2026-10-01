@@ -45,6 +45,10 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   );
   Timer? _ticker;
 
+  /// 跳转后的一次性补刷：`seek` 由播放线程异步执行，
+  /// 立刻取到的快照还是旧位置（进度条那边会先把目标锁住）。
+  Timer? _seekCatchUp;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +60,7 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
+    _seekCatchUp?.cancel();
     _player.dispose();
     _search.dispose();
     super.dispose();
@@ -171,6 +176,14 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
     _refreshPlayer();
   }
 
+  /// 跳转进度。播放线程消化口令是异步的，所以隔一小会儿再补一次快照，
+  /// 让进度条尽快回到真实位置（进度条自己还有「追不上就解锁」的兜底）。
+  void _seekTo(int positionMs) {
+    _runPlayerAction(() => playerSeek(positionMs: positionMs));
+    _seekCatchUp?.cancel();
+    _seekCatchUp = Timer(const Duration(milliseconds: 120), _refreshPlayer);
+  }
+
   /// 循环模式：关闭 → 列表循环 → 单曲循环 → 关闭。
   void _cycleRepeat() {
     const order = [RepeatMode.off, RepeatMode.all, RepeatMode.one];
@@ -255,8 +268,7 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
           onToggle: () => _runPlayerAction(playerToggle),
           onNext: () => _runPlayerAction(playerNext),
           onPrevious: () => _runPlayerAction(playerPrevious),
-          onSeek: (positionMs) =>
-              _runPlayerAction(() => playerSeek(positionMs: positionMs)),
+          onSeek: _seekTo,
           onCycleRepeat: _cycleRepeat,
         ),
       ),

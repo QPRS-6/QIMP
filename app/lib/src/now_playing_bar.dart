@@ -7,8 +7,9 @@ import 'package:musicplayer/src/rust/api/player.dart';
 
 /// 底部「正在播放」条：进度 + 播放控制。
 ///
-/// 进度来自定时轮询的快照；拖动时先用本地值渲染，松手才真正 seek——
-/// 否则轮询结果会把滑块“拉回去”，手感很怪。
+/// 进度来自定时轮询的快照。拖动时用本地值渲染；松手后**不立刻**交还给轮询值，
+/// 而是先把目标位置锁住——因为 `seek` 是异步的，紧接着读到的那次快照还是旧位置，
+/// 直接跟随会造成「弹回旧位置 → 再跳到新位置」的抖动。
 class NowPlayingBar extends StatefulWidget {
   const NowPlayingBar({
     super.key,
@@ -40,6 +41,65 @@ class _NowPlayingBarState extends State<NowPlayingBar> {
   /// 拖动中的位置（毫秒）；非 null 时不理会外部轮询值。
   double? _dragging;
 
+  /// 已下发、但快照里还没反映出来的跳转目标（毫秒）。
+  ///
+  /// `seek` 只是把口令丢给播放线程，紧接着读到的那次快照仍然是**跳转前**的位置；
+  /// 若不锁住目标，滑块会先弹回旧位置、等下一轮（最多 500ms）再跳到新位置。
+  double? _pendingSeek;
+
+  /// 锁住目标之后又轮询了几次：连续几次都追不上，说明这次跳转不会生效了。
+  int _pendingPolls = 0;
+
+  /// 快照位置与目标差多少就算「追上了」：精确跳转只能落在帧 / 包边界上。
+  static const double _seekToleranceMs = 400;
+
+  /// 兜底：连续这么多次轮询（约 3 秒）都没追上，就把控制权交还给轮询值。
+  static const int _seekGiveUpPolls = 6;
+
+  @override
+  void didUpdateWidget(NowPlayingBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_pendingSeek == null) return;
+
+    final snapshot = widget.snapshot;
+    final previous = oldWidget.snapshot;
+    // 换曲（自动续播 / 手动切歌）、停止、失败：这个目标已经没有意义了。
+    if (snapshot == null ||
+        snapshot.trackId != previous?.trackId ||
+        snapshot.state == PlayerState.stopped ||
+        snapshot.state == PlayerState.failed) {
+      _releasePendingSeek();
+      return;
+    }
+    if ((snapshot.positionMs - _pendingSeek!).abs() <= _seekToleranceMs) {
+      _releasePendingSeek();
+      return;
+    }
+    // 只有真正的新一轮轮询才计数（父级的其它重建会复用同一个快照对象）。
+    if (!identical(snapshot, previous)) {
+      _pendingPolls += 1;
+      if (_pendingPolls >= _seekGiveUpPolls) {
+        _releasePendingSeek();
+      }
+    }
+  }
+
+  /// 交还控制权：之后进度条重新跟随轮询值。
+  void _releasePendingSeek() {
+    _pendingSeek = null;
+    _pendingPolls = 0;
+  }
+
+  /// 松手：先锁住目标，再通知外部跳转（顺序不能反，否则中间那次刷新会闪回旧位置）。
+  void _commitSeek(double value) {
+    setState(() {
+      _dragging = null;
+      _pendingSeek = value;
+      _pendingPolls = 0;
+    });
+    widget.onSeek(value.round());
+  }
+
   @override
   Widget build(BuildContext context) {
     final snapshot = widget.snapshot;
@@ -50,9 +110,10 @@ class _NowPlayingBarState extends State<NowPlayingBar> {
     final theme = Theme.of(context);
     final track = widget.track;
     final total = track?.durationMs ?? 0;
-    final position = (_dragging ?? snapshot.positionMs.toDouble())
-        .clamp(0, total > 0 ? total.toDouble() : double.maxFinite)
-        .toDouble();
+    final upper = total > 0 ? total.toDouble() : double.maxFinite;
+    // 拖动中跟手 → 刚跳转锁在目标 → 其余跟随轮询值。
+    final shown = _dragging ?? _pendingSeek ?? snapshot.positionMs.toDouble();
+    final position = shown.clamp(0.0, upper).toDouble();
 
     return Material(
       color: theme.colorScheme.surfaceContainerHigh,
@@ -66,12 +127,7 @@ class _NowPlayingBarState extends State<NowPlayingBar> {
               onChanged: total > 0
                   ? (value) => setState(() => _dragging = value)
                   : null,
-              onChangeEnd: total > 0
-                  ? (value) {
-                      widget.onSeek(value.round());
-                      setState(() => _dragging = null);
-                    }
-                  : null,
+              onChangeEnd: total > 0 ? _commitSeek : null,
               value: position,
               max: total > 0 ? total.toDouble() : 1,
             ),
