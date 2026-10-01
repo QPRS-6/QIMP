@@ -6,3 +6,5 @@
 //! 命名注意：**不要**把子模块叫 `core`，那会在本模块内遮蔽 Rust 的 `core` crate。
 
 pub mod app;
+
+pub mod library;

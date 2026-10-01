@@ -37,6 +37,7 @@ dependencies:
 
   # 与 rust/ffi/Cargo.toml、codegen CLI 三者版本必须一致，因此用精确版本而非 ^
   flutter_rust_bridge: 2.13.0
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:

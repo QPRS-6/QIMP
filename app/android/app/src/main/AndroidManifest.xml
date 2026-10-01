@@ -1,6 +1,18 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- 纯本地播放器：需要把用户存储里的音乐目录当普通文件遍历、并解析标签与封面。
+         Android 11+ 走“所有文件访问”特殊权限（设置页手动授予）；
+         Android 10 及以下退回读外部存储运行时权限。
+         之所以不用 SAF：核心扫描器基于 std::fs，需要真实路径而不是 content:// URI。 -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
     <application
-        android:label="musicplayer"
+        android:label="本地音乐播放器"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

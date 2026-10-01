@@ -51,6 +51,29 @@ scripts/build-apk.sh --release    # release
 cd app && flutter analyze && flutter test
 ```
 
+## 权限说明（重要）
+
+- **Android 11+ 必须授予“所有文件访问”**（`MANAGE_EXTERNAL_STORAGE`）。原因：核心扫描器基于
+  `std::fs` + `walkdir`，需要真实文件路径；SAF 给的 `content://` URI 无法用它遍历。
+  首次启动会引导你跳到系统设置页；调试时也可用 adb 直接授予：
+
+  ```bash
+  adb shell appops set --uid com.qprs.musicplayer MANAGE_EXTERNAL_STORAGE allow
+  ```
+
+- 扫描范围是下面这些目录中**实际存在**的那些（由 Rust 侧 `suggest_scan_roots()` 返回）：
+  `/storage/emulated/0/{Music,Download,Podcasts,Recordings,Documents}`。
+- 索引数据库落在应用私有目录：`files/library.db`（SQLite + WAL），不需要任何权限。
+
+## 当前进度
+
+- [x] Rust 核心库：目录扫描（增量 / 剪枝保护）、元数据与封面探测、SQLite 索引、歌词解析（44 项测试）
+- [x] FFI 层：flutter_rust_bridge 2.13.0，Dart 直接使用 core 的类型（`#[frb(mirror)]`）
+- [x] 曲库界面：授权引导 → 扫描 → 曲库统计 → 列表 / 搜索（真机验证：464 首 / 10.0 GB）
+- [ ] 播放：音频输出、后台播放、通知栏控制
+- [ ] 专辑 / 艺术家页、播放列表、继续播放
+- [ ] 封面显示（core 已能探测封面，尚未解码展示）
+
 ## 几个必须知道的坑
 
 - **直接 `flutter build apk` 不会编译 Rust**。本项目用“手动 jniLibs”方案（没启用 flutter_rust_bridge 的

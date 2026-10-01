@@ -21,3 +21,7 @@ flutter_rust_bridge = "=2.13.0"
 # flutter_rust_bridge 展开宏时会出现 cfg(frb_expand)，显式声明可避免 unexpected_cfgs 告警
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
+[dev-dependencies]
+# 曲库接口的端到端测试需要真实临时目录
+tempfile = "3"

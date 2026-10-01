@@ -1,3 +1,6 @@
 rust_input: crate::api
 rust_root: ../rust/ffi/
 dart_output: lib/src/rust
+# u64（时长 / 文件大小）默认会被翻译成 Dart 的 BigInt，UI 里到处 .toInt() 很难看；
+# Dart 的 int 在原生平台本身就有 64 位，直接映射成 int 更自然。
+type_64bit_int: true
