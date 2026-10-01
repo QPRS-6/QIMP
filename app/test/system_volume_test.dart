@@ -23,12 +23,12 @@ void main() {
         .setMockMethodCallHandler(channel, null);
   });
 
-  test('step：把格数交给平台侧，并把调整后的音量带回来', () async {
+  test('setRatio：把目标比例交给平台侧，并带回落定后的音量', () async {
     mockPlatform((call) async => 0.4);
 
-    expect(await SystemVolume.step(1), 0.4);
-    expect(calls.single.method, 'adjustMusicVolume');
-    expect(calls.single.arguments, {'steps': 1});
+    expect(await SystemVolume.setRatio(0.42), 0.4);
+    expect(calls.single.method, 'setMusicVolume');
+    expect(calls.single.arguments, {'ratio': 0.42});
   });
 
   test('current：读当前音量', () async {
@@ -42,7 +42,7 @@ void main() {
   test('平台侧报错时返回 null，而不是把异常丢给界面', () async {
     mockPlatform((call) async => throw PlatformException(code: '不支持'));
 
-    expect(await SystemVolume.step(-1), isNull);
+    expect(await SystemVolume.setRatio(0.5), isNull);
     expect(await SystemVolume.current(), isNull);
   });
 }

@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import kotlin.math.roundToInt
 
 /**
  * 只做两件事：
@@ -52,9 +53,9 @@ class MainActivity : FlutterActivity() {
                     // 这样侧键、系统音量条、其它 App 看到的都是同一个数值，
                     // 不会出现“App 里拉满了但手机其实只有一点声”的错乱。
                     "getMusicVolume" -> result.success(musicVolume())
-                    "adjustMusicVolume" -> {
-                        val steps = call.argument<Int>("steps") ?: 0
-                        result.success(adjustMusicVolume(steps))
+                    "setMusicVolume" -> {
+                        val ratio = call.argument<Double>("ratio") ?: 0.0
+                        result.success(setMusicVolume(ratio))
                     }
                     else -> result.notImplemented()
                 }
@@ -68,17 +69,23 @@ class MainActivity : FlutterActivity() {
         return audio.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / max
     }
 
-    /** 按格增减音乐流音量，返回调整后的比例（0..1）。 */
-    private fun adjustMusicVolume(steps: Int): Double {
+    /**
+     * 把音乐流音量设成 [ratio]（0..1），返回落定后的比例（0..1）。
+     *
+     * 封面上的音量是**跟手线性**的：上层把「手指滑了多远」直接换算成比例，
+     * 这里再按系统的档位数取整。设完重新读一次返回，界面显示的就是真实值
+     * （比如系统只有 15 档，请求 0.42 实际会落在最接近的那一档上）。
+     */
+    private fun setMusicVolume(ratio: Double): Double {
         val audio = getSystemService(AudioManager::class.java) ?: return 0.0
-        if (steps != 0) {
-            audio.adjustStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                if (steps > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
-                // 让系统把音量条显示出来：用户划一下就有反馈，不必我们再画一套。
-                AudioManager.FLAG_SHOW_UI,
-            )
-        }
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        val level = (ratio.coerceIn(0.0, 1.0) * max).roundToInt().coerceIn(0, max)
+        audio.setStreamVolume(
+            AudioManager.STREAM_MUSIC,
+            level,
+            // 让系统把音量条显示出来：用户划一下就有反馈，不必我们再画一套。
+            AudioManager.FLAG_SHOW_UI,
+        )
         return musicVolume()
     }
 

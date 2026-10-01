@@ -17,8 +17,11 @@ import 'package:musicplayer/src/system_volume.dart';
 /// 封面加载器：默认走 Rust 的 `track_cover`，测试里换成确定性的桩。
 typedef CoverLoader = Future<Uint8List?> Function(int trackId);
 
-/// 音量步进器：默认改系统媒体音量，测试里换成记录调用的桩。
-typedef VolumeStepper = Future<double?> Function(int steps);
+/// 音量读取器：默认读系统媒体音量，测试里换成确定性的桩。
+typedef VolumeReader = Future<double?> Function();
+
+/// 音量设置器：把音量设成某个比例（0..1），测试里换成记录调用的桩。
+typedef VolumeSetter = Future<double?> Function(double ratio);
 
 /// 封面上那层滑动手势的 key（测试用它定位手势区域）。
 const Key coverSwipeKey = Key('player-cover-swipe');
@@ -29,8 +32,23 @@ const Key coverSwipeKey = Key('player-cover-swipe');
 /// 太小则要划很长才认。200 大致是“明显甩了一下”的手感。
 const double _swipeVelocity = 200;
 
+/// 音量跟手线性的换算基准：手指走满这么多逻辑像素，音量正好走完 0→100%。
+///
+/// 挑 320 是因为一次舒服的滑动就能走过大半段，又不至于轻轻一碰跳一大截
+/// （换算下来每 32 像素 ≈ 10%）。
+const double _volumeDragFullRange = 320;
+
+/// 纵向位移小于这个距离就不算「要调音量」。
+///
+/// 点一下、横向滑动时手指总会带一点纵向抖动；不留这块缓冲区，
+/// 随手碰一下就会把音量改掉。
+const double _volumeDragDeadZone = 8;
+
 /// 默认音量来源：系统媒体音量。
-Future<double?> _stepSystemVolume(int steps) => SystemVolume.step(steps);
+Future<double?> _readSystemVolume() => SystemVolume.current();
+
+/// 默认音量去向：按比例设成系统媒体音量。
+Future<double?> _setSystemVolume(double ratio) => SystemVolume.setRatio(ratio);
 
 /// 默认封面来源：Rust 侧按「内嵌图 → 同目录的 cover.jpg / folder.jpg 等」找。
 Future<Uint8List?> _loadCoverFromEngine(int trackId) async {
@@ -43,7 +61,8 @@ Future<Uint8List?> _loadCoverFromEngine(int trackId) async {
 /// 布局自上而下：封面 → 标题 / 艺术家 → 进度 → 上一曲·播放暂停·下一曲 →
 /// 随机 / 定时播放 / 循环。左上角是「返回播放列表」，右上角暂时不放东西。
 ///
-/// 封面上还能直接滑：右＝上一曲、左＝下一曲、上＝音量加、下＝音量减。
+/// 封面上还能直接滑：右＝上一曲、左＝下一曲、上＝音量加、下＝音量减
+/// （音量跟手线性：滑多少调多少）。
 ///
 /// 它自己不持有播放状态：一切都来自曲库页传进来的快照通知器，
 /// 所以这个页面上的按钮与底部播放条永远显示同一个状态。
@@ -60,7 +79,8 @@ class PlayerPage extends StatefulWidget {
     required this.onToggleShuffle,
     required this.sleepTimer,
     this.loadCover = _loadCoverFromEngine,
-    this.stepVolume = _stepSystemVolume,
+    this.readVolume = _readSystemVolume,
+    this.setVolume = _setSystemVolume,
   });
 
   /// 与曲库页共用同一个快照通知器（自动续播换歌时两边一起刷新）。
@@ -81,8 +101,11 @@ class PlayerPage extends StatefulWidget {
 
   final CoverLoader loadCover;
 
-  /// 音量步进（±1 格），返回调整后的比例（0..1）；拿不到就别提示。
-  final VolumeStepper stepVolume;
+  /// 读当前系统媒体音量（0..1）；读不到返回 null。
+  final VolumeReader readVolume;
+
+  /// 把系统媒体音量设成某个比例（0..1），返回平台落定后的比例。
+  final VolumeSetter setVolume;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -97,6 +120,18 @@ class _PlayerPageState extends State<PlayerPage> {
   _GestureHint? _hint;
   bool _hintVisible = false;
   Timer? _hintTimer;
+
+  /// 本次纵向拖动累计的位移（向上为正，逻辑像素）。
+  double _volumeDragDy = 0;
+
+  /// 本次纵向拖动的起点音量（比例）；还没读回来时是 null。
+  double? _volumeDragStart;
+
+  /// 读取起点音量的过程：松手时若还没回来，就等它一下再算。
+  Future<double?> _volumeDragRead = Future<double?>.value();
+
+  /// 拖动序号：每次按下自增，用来丢掉上一把迟到的异步结果。
+  int _volumeDragToken = 0;
 
   Future<Uint8List?> _coverOf(int trackId) =>
       _covers[trackId] ??= widget.loadCover(trackId);
@@ -120,6 +155,13 @@ class _PlayerPageState extends State<PlayerPage> {
     });
   }
 
+  /// 让提示立刻淡出（内容留着，只是透明度归零）。
+  void _hideHint() {
+    _hintTimer?.cancel();
+    if (!_hintVisible) return;
+    setState(() => _hintVisible = false);
+  }
+
   /// 横向滑动：**右＝上一曲、左＝下一曲**（按用户要求的方向）。
   ///
   /// 注意速度的正负号：手指往右甩（内容向左走）速度为正，所以正号对应“回去”。
@@ -137,24 +179,69 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  /// 纵向滑动：上＝音量加、下＝音量减，一次一格（和侧键同一个粒度）。
+  /// 纵向拖动：上＝音量加、下＝音量减，**跟手线性**。
   ///
-  /// 改的是系统媒体音量，所以平台侧还会弹出系统音量条；这里只补一个百分比，
-  /// 免得用户得盯着屏幕边缘看。
-  Future<void> _onVerticalSwipe(double velocity) async {
-    final up = velocity <= -_swipeVelocity;
-    final down = velocity >= _swipeVelocity;
-    if (!up && !down) return;
-
-    final ratio = await widget.stepVolume(up ? 1 : -1);
-    if (!mounted || ratio == null) return;
-    _flash(
-      _GestureHint(
-        icon: up ? Icons.volume_up : Icons.volume_down,
-        label: '音量 ${(ratio * 100).round()}%',
-      ),
+  /// 划过的距离按 [_volumeDragFullRange] 换算成音量——滑多少调多少，
+  /// 而不是「划一下就固定加一格」。拖动过程中只刷新封面上的百分比，
+  /// 松手才写进系统音量：否则每一帧都要过一次平台通道，系统的音量条也会闪个不停。
+  void _onVerticalDragStart(DragStartDetails details) {
+    final token = ++_volumeDragToken;
+    _volumeDragDy = 0;
+    _volumeDragStart = null;
+    // 以「按下那一刻的音量」为基准：用户用侧键改过之后也不会算歪。
+    final read = _volumeDragRead = widget.readVolume();
+    unawaited(
+      read.then((ratio) {
+        if (!mounted || token != _volumeDragToken) return;
+        _volumeDragStart = ratio;
+      }),
     );
   }
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    _volumeDragDy -= details.delta.dy; // 手指往上走为正
+    final start = _volumeDragStart;
+    if (start == null || _volumeDragDy.abs() < _volumeDragDeadZone) return;
+    final ratio = _volumeRatioAt(start, _volumeDragDy);
+    _flash(_volumeHint(ratio, goingUp: _volumeDragDy > 0));
+  }
+
+  Future<void> _onVerticalDragEnd(DragEndDetails details) async {
+    final dy = _volumeDragDy;
+    _volumeDragDy = 0;
+    final token = _volumeDragToken;
+    // 起点音量通常早就回来了；平台侧慢的话就在这儿等一下。
+    final start = await _volumeDragRead;
+    if (!mounted || token != _volumeDragToken) return;
+    // 读不到起点、或者只是碰了一下：当没这回事，别把音量设成 0 之类的怪值。
+    if (start == null || dy.abs() < _volumeDragDeadZone) return;
+
+    final applied = await widget.setVolume(_volumeRatioAt(start, dy));
+    if (!mounted || token != _volumeDragToken) return;
+    if (applied == null) {
+      // 没设成功：把拖动时那个预测值收起来，别让用户以为它已经生效。
+      _hideHint();
+      return;
+    }
+    _flash(_volumeHint(applied, goingUp: dy > 0));
+  }
+
+  void _onVerticalDragCancel() {
+    _volumeDragToken += 1;
+    _volumeDragDy = 0;
+    _volumeDragStart = null;
+  }
+
+  /// 从起点滑了 [dy] 像素（向上为正）之后的音量比例，夹在 0..1。
+  double _volumeRatioAt(double start, double dy) =>
+      (start + dy / _volumeDragFullRange).clamp(0.0, 1.0);
+
+  /// 音量提示：往哪边滑就用哪个图标。
+  _GestureHint _volumeHint(double ratio, {required bool goingUp}) =>
+      _GestureHint(
+        icon: goingUp ? Icons.volume_up : Icons.volume_down,
+        label: '音量 ${(ratio * 100).round()}%',
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -191,8 +278,10 @@ class _PlayerPageState extends State<PlayerPage> {
                       behavior: HitTestBehavior.opaque,
                       onHorizontalDragEnd: (details) =>
                           _onHorizontalSwipe(details.primaryVelocity ?? 0),
-                      onVerticalDragEnd: (details) =>
-                          _onVerticalSwipe(details.primaryVelocity ?? 0),
+                      onVerticalDragStart: _onVerticalDragStart,
+                      onVerticalDragUpdate: _onVerticalDragUpdate,
+                      onVerticalDragEnd: _onVerticalDragEnd,
+                      onVerticalDragCancel: _onVerticalDragCancel,
                       child: Stack(
                         alignment: Alignment.center,
                         children: [

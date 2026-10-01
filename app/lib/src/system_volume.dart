@@ -16,9 +16,12 @@ class SystemVolume {
   /// 读当前音量比例（0..1）；读不到返回 null（宿主机测试 / 通道缺失）。
   static Future<double?> current() => _invoke('getMusicVolume');
 
-  /// 按格增减音量（正数变大、负数变小），返回调整后的比例（0..1）。
-  static Future<double?> step(int steps) =>
-      _invoke('adjustMusicVolume', {'steps': steps});
+  /// 把音量直接设成 [ratio]（0..1），返回平台落定后的比例（0..1）。
+  ///
+  /// 用「设成多少」而不是「加几格」：封面上的音量是跟手线性的，
+  /// 滑动距离换算出来的就是一个绝对比例，取整交给平台侧按系统档位去做。
+  static Future<double?> setRatio(double ratio) =>
+      _invoke('setMusicVolume', {'ratio': ratio});
 
   /// 平台侧不该让“调音量”这种小事把界面搞崩：出错就返回 null，由调用方决定怎么提示。
   static Future<double?> _invoke(

@@ -27,11 +27,14 @@ class _PlayerHarness {
   /// 最后一次跳转的目标位置（毫秒）。
   int? seekedTo;
 
-  /// 每次音量步进请求的格数（正数变大、负数变小）。
-  final List<int> volumeSteps = [];
+  /// 每次「设音量」请求的比例（0..1，按调用顺序）。
+  final List<double> volumeSets = [];
 
-  /// 音量步进要回报的比例；默认 0.5。
-  double? volumeRatio = 0.5;
+  /// 读到的当前音量；null 表示平台侧读不到。
+  double? volumeRead = 0.5;
+
+  /// 置 true 表示平台侧改音量失败（返回 null）。
+  bool volumeSetFails = false;
 
   PlayerPage page({CoverLoader? loadCover}) => PlayerPage(
     player: player,
@@ -44,9 +47,10 @@ class _PlayerHarness {
     onToggleShuffle: () => calls.add('shuffle'),
     sleepTimer: sleepTimer,
     loadCover: loadCover ?? (_) async => null,
-    stepVolume: (steps) async {
-      volumeSteps.add(steps);
-      return volumeRatio;
+    readVolume: () async => volumeRead,
+    setVolume: (ratio) async {
+      volumeSets.add(ratio);
+      return volumeSetFails ? null : ratio;
     },
   );
 
@@ -57,6 +61,21 @@ class _PlayerHarness {
     sleepTimer.dispose();
     player.dispose();
   }
+}
+
+/// 在封面上按住并纵向滑一段距离，返回还按着的手势（由调用方决定何时松手）。
+///
+/// [up] 是**真正参与音量换算**的距离（向上为正）。实现上先走 40 像素把纵向识别器
+/// “唤醒”，这段抖动区在 Flutter 默认的 DragStartBehavior.start 下不会作为位移下发，
+/// 所以后面那一下的距离就是干净的整数，验证“滑多少调多少”时不受框架细节干扰。
+Future<TestGesture> _startVolumeDrag(WidgetTester tester, double up) async {
+  final gesture = await tester.startGesture(
+    tester.getCenter(find.byKey(coverSwipeKey)),
+  );
+  await gesture.moveBy(Offset(0, -40 * up.sign));
+  await gesture.moveBy(Offset(0, -up));
+  await tester.pump();
+  return gesture;
 }
 
 void main() {
@@ -166,37 +185,100 @@ void main() {
     expect(harness.calls, isEmpty);
   });
 
-  testWidgets('封面上滑调大音量、下滑调小音量，并显示百分比', (tester) async {
-    final harness = _PlayerHarness()..volumeRatio = 0.6;
+  testWidgets('封面上滑按滑动距离线性调大音量、下滑线性调小，并跟手显示百分比', (tester) async {
+    final harness = _PlayerHarness()..volumeRead = 0.5;
     addTearDown(harness.dispose);
 
     await tester.pumpWidget(harness.build());
 
-    await tester.fling(find.byKey(coverSwipeKey), const Offset(0, -200), 1000);
+    // 往上滑 60 像素：0.5 + 60/320 = 0.6875 → 69%
+    final up = await _startVolumeDrag(tester, 60);
+    expect(find.text('音量 69%'), findsOneWidget, reason: '拖动中就要跟手显示');
+    await up.up();
     await tester.pumpAndSettle();
 
-    expect(harness.volumeSteps, [1], reason: '上滑＝音量 +1 格');
-    expect(find.text('音量 60%'), findsOneWidget);
-
-    await tester.fling(find.byKey(coverSwipeKey), const Offset(0, 200), 1000);
-    await tester.pumpAndSettle();
-
-    expect(harness.volumeSteps, [1, -1], reason: '下滑＝音量 -1 格');
-    expect(find.text('音量 60%'), findsOneWidget);
+    expect(harness.volumeSets.single, 0.6875, reason: '滑 60 像素：0.5 → 0.6875');
+    expect(find.text('音量 69%'), findsOneWidget);
     expect(harness.calls, isEmpty, reason: '调音量不该影响播放状态');
+
+    // 反过来往下滑 80 像素：0.5 - 80/320 = 0.25
+    final down = await _startVolumeDrag(tester, -80);
+    await down.up();
+    await tester.pumpAndSettle();
+
+    expect(harness.volumeSets, [0.6875, 0.25], reason: '滑 80 像素：0.5 → 0.25');
+    expect(find.text('音量 25%'), findsOneWidget);
   });
 
-  testWidgets('平台侧拿不到音量时不弹提示（也别崩）', (tester) async {
-    final harness = _PlayerHarness()..volumeRatio = null;
+  testWidgets('音量滑到头会夹在 0% / 100%，不会算到外面去', (tester) async {
+    final harness = _PlayerHarness()..volumeRead = 0.9;
     addTearDown(harness.dispose);
 
     await tester.pumpWidget(harness.build());
 
-    await tester.fling(find.byKey(coverSwipeKey), const Offset(0, -200), 1000);
+    // 0.9 + 200/320 > 1：应该停在满格。
+    final up = await _startVolumeDrag(tester, 200);
+    await up.up();
     await tester.pumpAndSettle();
 
-    expect(harness.volumeSteps, [1], reason: '请求照样发出去了');
+    expect(harness.volumeSets, [1.0]);
+    expect(find.text('音量 100%'), findsOneWidget);
+
+    // 换一个很低的起点往下滑一大截：不该出现负数。
+    harness.volumeRead = 0.1;
+    final down = await _startVolumeDrag(tester, -200);
+    await down.up();
+    await tester.pumpAndSettle();
+
+    expect(harness.volumeSets, [1.0, 0.0]);
+    expect(find.text('音量 0%'), findsOneWidget);
+  });
+
+  testWidgets('封面只是轻轻碰一下（抖动区之内）不动音量', (tester) async {
+    final harness = _PlayerHarness();
+    addTearDown(harness.dispose);
+
+    await tester.pumpWidget(harness.build());
+
+    await tester.drag(find.byKey(coverSwipeKey), const Offset(0, -6));
+    await tester.pumpAndSettle();
+
+    expect(harness.volumeSets, isEmpty, reason: '走 6 像素还不够判定成“调音量”');
     expect(find.textContaining('音量'), findsNothing);
+    expect(harness.calls, isEmpty, reason: '也不该被当成换曲');
+  });
+
+  testWidgets('平台侧读不到当前音量时不动它（也别崩）', (tester) async {
+    final harness = _PlayerHarness()..volumeRead = null;
+    addTearDown(harness.dispose);
+
+    await tester.pumpWidget(harness.build());
+
+    final up = await _startVolumeDrag(tester, 160);
+    await up.up();
+    await tester.pumpAndSettle();
+
+    expect(harness.volumeSets, isEmpty, reason: '没有基准就别乱设，免得把音量拉到 0');
+    expect(find.textContaining('音量'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('平台侧设置失败时不弹提示（也别崩）', (tester) async {
+    final harness = _PlayerHarness()..volumeSetFails = true;
+    addTearDown(harness.dispose);
+
+    await tester.pumpWidget(harness.build());
+
+    final up = await _startVolumeDrag(tester, 60);
+    await up.up();
+    await tester.pumpAndSettle();
+
+    expect(harness.volumeSets, [0.6875], reason: '请求照样发出去了');
+    // 拖动中那个预测值要收起来：平台侧没改成功，别让用户以为已经生效。
+    expect(
+      tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
+      0,
+    );
     expect(tester.takeException(), isNull);
   });
 
