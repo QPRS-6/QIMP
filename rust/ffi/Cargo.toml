@@ -1,0 +1,23 @@
+[package]
+name = "musicplayer-ffi"
+description = "Flutter FFI 边界层：把 musicplayer-core 暴露给 Dart，绑定由 flutter_rust_bridge 生成。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "musicplayer_ffi"
+# cdylib -> Android 的 libmusicplayer_ffi.so；staticlib 便于将来做 iOS/桌面静态链接
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+musicplayer-core.workspace = true
+# 必须与 codegen CLI、Dart 侧 pubspec 三者版本严格一致，故用 "=" 锁定
+flutter_rust_bridge = "=2.13.0"
+
+# flutter_rust_bridge 展开宏时会出现 cfg(frb_expand)，显式声明可避免 unexpected_cfgs 告警
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

@@ -9,11 +9,11 @@
 build/
 *.iml
 
-# Android (生成的 .so 不入库)
-android/.gradle/
-android/local.properties
-android/.idea/
-android/app/src/main/jniLibs/
+# Android（注意：这些模式不加前导目录，才能匹配 app/android/... 这种嵌套结构）
+.gradle/
+local.properties
+.idea/
+jniLibs/
 *.jks
 *.keystore
 

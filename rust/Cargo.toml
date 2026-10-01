@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core"]
+members = ["core", "ffi"]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,5 +24,6 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 [profile.release]
 lto = "thin"
 codegen-units = 1
-panic = "abort"
+# 不要设 panic = "abort"：flutter_rust_bridge 的胶水层需要 unwind 才能把 Rust panic
+# 转成 Dart 侧异常；abort 会直接终止整个 App 进程（且官方模板同样使用默认的 unwind）。
 strip = "symbols"
