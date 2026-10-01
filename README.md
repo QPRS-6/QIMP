@@ -1,6 +1,6 @@
 # QIMP
 
-Android 端**纯本地**音乐播放器（仓库名从 `ro.qprs.musicplayer` 改成了 **QIMP**）：Rust 负责全部逻辑（扫描 / 元数据 / 索引 / 歌词），Flutter 只负责界面。
+Android 端**纯本地**音乐播放器：Rust 负责全部逻辑（扫描 / 元数据 / 索引 / 歌词），Flutter 只负责界面。
 
 ## 目录结构
 
@@ -437,9 +437,6 @@ RemoteViews 自己撑开，2×1 与 4×1 没有任何区别。
   adb shell dumpsys media.audio_flinger | grep -E 'qprs.*actual_seconds'
   # 隔 20 秒再跑一次，actual_seconds 的增量应约等于 20 秒
   ```
-- **小米（HyperOS）可能拒绝 adb 注入的点击**（`SecurityException: ... INJECT_EVENTS`）：
-  之前的会话里遇到过，但 2026-10-01 这次 `adb shell input tap` 是生效的
-  （点右上角「歌词」按钮直接翻到了歌词页）。真机验证先试自动点击，被拒再改手动点。
 - **widget 测试的默认窗口是 800×600 逻辑像素**——最短边正好 600，会被判成**平板**
   （见上面「平板上的播放界面」）。所以 `player_page_test.dart` 在 `setUp` 里统一把窗口
   换成 1080×2400 @3x（真机上就是 360×800）：测手机的用例才真的跑在手机那一套上；
