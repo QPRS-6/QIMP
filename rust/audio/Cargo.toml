@@ -3,8 +3,9 @@ name = "musicplayer-audio"
 description = "解码与播放：symphonia 解码 + 播放队列 + 播放引擎，输出设备用 trait 抽象（Android 走 Oboe）。"
 version.workspace = true
 edition.workspace = true
-# 单独抬高：symphonia 0.6 要求 rustc ≥ 1.85（core / ffi 两个 crate 仍保持 workspace 的 1.82）
-rust-version = "1.85"
+# 单独抬高：symphonia 0.6 要求 rustc ≥ 1.85（core / ffi 两个 crate 仍保持 workspace 的 1.82）；
+# 再加 libopus 适配器（edition 2024）后是 1.89。本机工具链 1.98，构建无碍。
+rust-version = "1.89"
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -15,7 +16,14 @@ name = "musicplayer_audio"
 [dependencies]
 musicplayer-core.workspace = true
 ringbuf = "0.5.2"
+# 解码格式按“手机上真正会遇到的文件”来选：
+# - mp3 / flac / aac(m4a) / alac / wav / aiff 是常规音乐
+# - ogg 容器要同时带上 vorbis 与 opus：**很多手机录音与下载的 .ogg 其实是 Opus**
+#   （只带 vorbis 时它们会以“不支持的音频格式”报错，真机上踩到过）
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "aac", "alac", "isomp4", "ogg", "vorbis", "wav", "pcm", "aiff", "opt-simd"] }
+# symphonia 本体没有 Opus 解码器，这个适配器把 libopus 接进来（默认会连带编译 libopus 源码，
+# 于是 Android 侧只需要 NDK 工具链，不用依赖系统里的 .so）。
+symphonia-adapter-libopus = "0.3.0"
 thiserror.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]

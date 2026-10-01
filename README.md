@@ -75,15 +75,22 @@ cd app && flutter analyze && flutter test
 - [x] Rust 核心库：目录扫描（增量 / 剪枝保护）、元数据与封面探测、SQLite 索引、歌词解析（44 项测试）
 - [x] FFI 层：flutter_rust_bridge 2.13.0，Dart 直接使用 core 的类型（`#[frb(mirror)]`）
 - [x] 曲库界面：授权引导 → 扫描 → 曲库统计 → 列表 / 搜索（真机验证：464 首 / 10.0 GB）
-- [x] 播放（`rust/audio`，17 项测试）：symphonia 解码 + 无锁环形缓冲 + Oboe 输出、播放队列、播放 / 暂停 / 上下一首 / 跳转 / 循环模式、底部播放条与列表高亮
-- [ ] 后台播放与通知栏控制（需要 Kotlin 前台服务 + MediaSession）
+- [x] 播放（`rust/audio`）：symphonia 解码 + 无锁环形缓冲 + Oboe 输出、播放队列、播放 / 暂停 / 上下一首 / 跳转 / 循环模式、底部播放条与列表高亮
+- [x] 后台播放与通知栏 / 锁屏 / 耳机按键控制（Kotlin 前台服务 + MediaSession，按钮经 JNI 直达 Rust）
+- [x] 随机播放（一轮之内不重复）与定时播放（到点暂停）
+- [x] 全屏播放界面：封面 / 标题 / 进度、上一曲·播放暂停·下一曲、随机 / 定时 / 循环；
+      封面上左滑＝上一曲、右滑＝下一曲、上滑＝音量加、下滑＝音量减（改的是系统媒体音量）
+- [x] 封面显示（列表与播放界面，内嵌图优先，其次同目录 `cover.jpg` / `folder.jpg`）
 - [ ] 专辑 / 艺术家页、播放列表、继续播放
-- [ ] 封面显示（core 已能探测封面，尚未解码展示）
 
 ### 播放能放哪些格式
 
-解码用 symphonia，**支持**：mp3 / flac / wav / aiff / m4a(mp4+aac+alac) / ogg(vorbis)。
-**不支持**：opus、ape、wma、dsf/dff、mpc —— symphonia 没有这些解码器，扫得到但播不了，
+解码用 symphonia，**支持**：mp3 / flac / wav / aiff / m4a(mp4+aac+alac) / ogg(vorbis) / ogg(opus)。
+其中 **Opus 不是 symphonia 自带的**（0.6 连特性都没有），靠 `symphonia-adapter-libopus` 把 libopus 接进来，
+构建时会把 libopus 源码一起编进 `.so`，所以 Android 侧只需要 NDK 工具链、不依赖系统里的库。
+这一点很值得记一笔：**手机录音与不少下载源的 `.ogg` 其实是 Opus**，只带 vorbis 时会直接“播不了”。
+
+**不支持**：ape、wma、dsf/dff、mpc —— symphonia 没有这些解码器，扫得到但播不了，
 播放失败时会在底部播放条上直接显示原因，不会静默失败。
 
 **被截断的文件**（下载没下完）按“这首放完了”处理：能播的部分照播，之后自动接下一首，

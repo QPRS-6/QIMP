@@ -11,7 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lofty::file::{AudioFile, TaggedFileExt};
+use lofty::file::{AudioFile, TaggedFile, TaggedFileExt};
+use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey, Tag};
 
 use crate::error::Result;
@@ -38,15 +39,32 @@ const SIBLING_COVER_NAMES: &[&str] = &[
     "front.jpg",
 ];
 
+/// 读标签 + 属性；`None` 表示这份文件实在解析不了（交给调用方走文件名兜底）。
+///
+/// **必须按内容嗅探类型**：`lofty::read_from_path` 只认扩展名，而它把 `.ogg` 一律
+/// 当成 Vorbis —— Opus 编码的 `.ogg`（手机录音、不少下载源都是）会因此整份解析失败，
+/// 结果就是标题退化成文件名、时长变成 0（列表里显示 `--:--`，进度条也没法用）。
+/// `guess_file_type()` 会先读文件头，认不出来时才保留“按扩展名”的猜测，
+/// 所以不会比原来更差。
+fn read_tagged(path: &Path) -> Option<TaggedFile> {
+    Probe::open(path)
+        .map_err(|_| ())
+        .and_then(|probe| probe.guess_file_type().map_err(|_| ()))
+        .and_then(|probe| probe.read().map_err(|_| ()))
+        // 嗅探这条路万一也不行，退回最初那套“按扩展名解析”。
+        .or_else(|_| lofty::read_from_path(path))
+        .ok()
+}
+
 /// 读取单个音频文件的完整信息。
 pub fn read(path: impl AsRef<Path>) -> Result<Track> {
     let path = path.as_ref();
     let (size_bytes, modified_at) = file_stamp(path)?;
 
-    let tagged = match lofty::read_from_path(path) {
-        Ok(tagged) => tagged,
+    let tagged = match read_tagged(path) {
+        Some(tagged) => tagged,
         // 解析失败也要给出一条记录，否则用户的破损文件会“凭空消失”。
-        Err(_) => return Ok(fallback_track(path, size_bytes, modified_at)),
+        None => return Ok(fallback_track(path, size_bytes, modified_at)),
     };
 
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
@@ -86,7 +104,7 @@ pub fn read(path: impl AsRef<Path>) -> Result<Track> {
 pub fn read_cover(path: impl AsRef<Path>) -> Result<Option<Cover>> {
     let path = path.as_ref();
 
-    if let Ok(tagged) = lofty::read_from_path(path) {
+    if let Some(tagged) = read_tagged(path) {
         let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
         if let Some(picture) = tag.and_then(|t| t.pictures().first()) {
             let data = picture.data().to_vec();
@@ -341,6 +359,40 @@ mod tests {
 
     fn guess(name: &str) -> GuessedName {
         guess_from_filename(Path::new(name))
+    }
+
+    /// 回归：`.ogg` 里的 Opus 必须能读出时长/采样率/声道。
+    ///
+    /// 这里以前是坏的：`lofty::read_from_path` 只按扩展名判断类型，`.ogg` 会被当成
+    /// Vorbis，Opus 文件整份解析失败 → 标题退化成文件名、时长 0（列表显示 `--:--`）。
+    #[test]
+    fn reads_opus_ogg_properties() {
+        let track = read(testdata("ogg_opus.ogg")).expect("读 Opus 样本");
+        assert_eq!(track.duration_ms, 1000, "1 秒样本应报 1000ms");
+        assert_eq!(
+            track.sample_rate,
+            Some(16000),
+            "读的是 OpusHead 里的输入采样率"
+        );
+        assert_eq!(track.channels, Some(1));
+        // 样本里没有 TITLE 标签，标题来自文件名启发式（下划线换成空格）。
+        assert_eq!(track.title, "ogg opus");
+    }
+
+    /// Vorbis 的 `.ogg` 走同一条路（嗅探不该把它弄坏）。
+    #[test]
+    fn reads_vorbis_ogg_properties() {
+        let track = read(testdata("ogg_vorbis.ogg")).expect("读 Vorbis 样本");
+        assert_eq!(track.duration_ms, 1000);
+        assert_eq!(track.sample_rate, Some(16000));
+        assert_eq!(track.channels, Some(1));
+    }
+
+    /// 样本文件的绝对路径（见 `rust/testdata/README.md`）。
+    fn testdata(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../testdata")
+            .join(name)
     }
 
     #[test]

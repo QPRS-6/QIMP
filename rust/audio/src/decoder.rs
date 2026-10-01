@@ -5,10 +5,12 @@
 
 use std::fs::File;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use symphonia::core::audio::sample::Sample;
 use symphonia::core::codecs::audio::AudioDecoder as SymphoniaDecoder;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
@@ -17,6 +19,25 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Time, TimeBase};
 
 use crate::error::{AudioError, Result};
+
+/// 解码器注册表：symphonia 默认那一套 + libopus。
+///
+/// 为什么不能直接用 `symphonia::default::get_codecs()`：symphonia 0.6 本体**没有**
+/// Opus 解码器（特性列表里根本没有 opus 这一项），而 Ogg 容器里最常见的恰恰是 Opus ——
+/// 手机上录的音、从网上下载的 `.ogg` 基本都是它。只带 vorbis 时这些文件会以
+/// 「不支持的音频格式（无法解码）」直接播不了，真机上就是这么踩到的。
+///
+/// 容器侧不用动：`symphonia-format-ogg` 自己认得 OpusHead，会把 codec 标成 Opus，
+/// 缺的只是「谁来解这些包」。
+fn codec_registry() -> &'static CodecRegistry {
+    static REGISTRY: OnceLock<CodecRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut registry = CodecRegistry::new();
+        symphonia::default::register_enabled_codecs(&mut registry);
+        registry.register_audio_decoder::<symphonia_adapter_libopus::OpusDecoder>();
+        registry
+    })
+}
 
 /// 解码输出的格式，输出设备按它开流。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +113,7 @@ impl AudioDecoder {
                 .and_then(|params| params.audio())
                 .ok_or_else(|| AudioError::UnsupportedFormat("缺少编解码参数".to_string()))?;
 
-            let decoder = symphonia::default::get_codecs()
+            let decoder = codec_registry()
                 .make_audio_decoder(params, &AudioDecoderOptions::default())
                 .map_err(map_error)?;
 
