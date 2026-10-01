@@ -165,6 +165,8 @@ class _NowPlayingBarState extends State<NowPlayingBar> {
                   IconButton(
                     tooltip: _repeatTooltip(snapshot.repeat),
                     onPressed: widget.onCycleRepeat,
+                    // 循环开启时用主题色点亮：单曲循环只能用描边字形表达（见 _repeatIcon）。
+                    color: _repeatColor(snapshot.repeat, theme.colorScheme),
                     icon: Icon(_repeatIcon(snapshot.repeat)),
                   ),
                 ],
@@ -188,16 +190,25 @@ class _NowPlayingBarState extends State<NowPlayingBar> {
     }
   }
 
+  /// 循环按钮的图标（关闭 / 列表循环 / 单曲循环）。
+  ///
+  /// 这里避开 `Icons.repeat_on` / `Icons.repeat_one_on` 这套 `_on` 实心变体：
+  /// 随 Flutter 打包的 MaterialIcons 字体（`assets/flutter_assets/fonts/
+  /// MaterialIcons-Regular.otf`）里**没有** `repeat_one_on`(U+E522) 的字形，
+  /// 渲染出来是一个纯色方块，所以“开启”改用颜色表达（见 [_repeatColor]）。
   static IconData _repeatIcon(RepeatMode mode) {
     switch (mode) {
       case RepeatMode.off:
-        return Icons.repeat;
       case RepeatMode.all:
-        return Icons.repeat_on;
+        return Icons.repeat;
       case RepeatMode.one:
-        return Icons.repeat_one_on;
+        return Icons.repeat_one;
     }
   }
+
+  /// 循环开启时用主题色点亮图标；关闭时用默认的前景色。
+  static Color? _repeatColor(RepeatMode mode, ColorScheme scheme) =>
+      mode == RepeatMode.off ? null : scheme.primary;
 
   static String _repeatTooltip(RepeatMode mode) {
     switch (mode) {

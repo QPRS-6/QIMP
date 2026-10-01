@@ -28,14 +28,21 @@ PlayerSnapshot _snapshot({
   int trackId = 7,
   int positionMs = 0,
   PlayerState state = PlayerState.playing,
+  RepeatMode repeat = RepeatMode.off,
 }) => PlayerSnapshot(
   state: state,
   positionMs: positionMs,
   index: 0,
   queueLen: 1,
   trackId: trackId,
-  repeat: RepeatMode.off,
+  repeat: repeat,
 );
+
+/// 循环按钮：四个按钮里唯一 tooltip 以「循环」开头的那个。
+IconButton _repeatButton(WidgetTester tester) =>
+    tester.widgetList<IconButton>(find.byType(IconButton)).firstWhere(
+      (button) => (button.tooltip ?? '').startsWith('循环'),
+    );
 
 /// 曲库页接线的最小骨架。
 Widget _harness({required PlayerSnapshot snapshot, required List<int> seeked}) =>
@@ -145,6 +152,30 @@ void main() {
     );
     expect(_sliderValue(tester), 60000);
     expect(seeked, isEmpty, reason: '没松手就不该跳转');
+  });
+
+  testWidgets('循环按钮绘制的是字体里真有的字形（不用 *_on 实心变体）', (tester) async {
+    // 回归用例：单曲循环曾经用 Icons.repeat_one_on 表示，但随 Flutter 打包的
+    // MaterialIcons 字体里没有 U+E522 的字形，界面上会渲染成一个纯色方块。
+    // 所以：关闭 / 列表循环用 Icons.repeat，单曲循环用 Icons.repeat_one，
+    // 靠颜色区分开与关。
+    Future<void> pump(RepeatMode mode) => tester.pumpWidget(
+      _harness(snapshot: _snapshot(repeat: mode), seeked: <int>[]),
+    );
+
+    IconData iconOf(WidgetTester tester) =>
+        (_repeatButton(tester).icon as Icon).icon!;
+
+    await pump(RepeatMode.off);
+    expect(iconOf(tester), Icons.repeat);
+    expect(_repeatButton(tester).color, isNull, reason: '关闭时用默认的前景色');
+
+    await pump(RepeatMode.all);
+    expect(iconOf(tester), Icons.repeat, reason: '列表循环只靠颜色区分');
+
+    await pump(RepeatMode.one);
+    expect(iconOf(tester), Icons.repeat_one, reason: '「1」必须画得出来');
+    expect(_repeatButton(tester).color, isNotNull, reason: '开启时点亮图标');
   });
 
   testWidgets('暂停状态下跳转也能锁住目标位置', (tester) async {
