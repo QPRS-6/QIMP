@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "ffi"]
+members = ["core", "audio", "ffi"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,7 @@ repository = "https://github.com/qprs/ro.qprs.musicplayer"
 
 [workspace.dependencies]
 musicplayer-core = { path = "core" }
+musicplayer-audio = { path = "audio" }
 
 # 纯逻辑核心，必须保持“无平台依赖”，以便在宿主机上直接跑单元测试
 thiserror = "2"

@@ -1,0 +1,27 @@
+[package]
+name = "musicplayer-audio"
+description = "解码与播放：symphonia 解码 + 播放队列 + 播放引擎，输出设备用 trait 抽象（Android 走 Oboe）。"
+version.workspace = true
+edition.workspace = true
+# 单独抬高：symphonia 0.6 要求 rustc ≥ 1.85（core / ffi 两个 crate 仍保持 workspace 的 1.82）
+rust-version = "1.85"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "musicplayer_audio"
+
+[dependencies]
+musicplayer-core.workspace = true
+ringbuf = "0.5.2"
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "aac", "alac", "isomp4", "ogg", "vorbis", "wav", "pcm", "aiff", "opt-simd"] }
+thiserror.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+oboe = "0.6.1"
+
+[dev-dependencies]
+# 测试要生成真实的临时音频文件（而不是空壳），tempfile 提供临时目录
+tempfile = "3"
+

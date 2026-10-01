@@ -15,6 +15,7 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 musicplayer-core.workspace = true
+musicplayer-audio.workspace = true
 # 必须与 codegen CLI、Dart 侧 pubspec 三者版本严格一致，故用 "=" 锁定
 flutter_rust_bridge = "=2.13.0"
 

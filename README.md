@@ -7,6 +7,7 @@ Android 端**纯本地**音乐播放器：Rust 负责全部逻辑（扫描 / 元
 | 路径 | 说明 |
 | --- | --- |
 | `rust/core/` | 核心库，纯 Rust、不依赖 Android，可在宿主机直接 `cargo test` |
+| `rust/audio/` | 播放层：symphonia 解码 + 播放队列 + 播放引擎；输出设备用 trait 抽象（Android 走 Oboe） |
 | `rust/ffi/` | FFI 边界层，绑定由 flutter_rust_bridge 生成 |
 | `app/` | Flutter 应用（Android 平台） |
 | `scripts/build-apk.sh` | 一键构建 APK：先编 Rust 成 `.so`，再交给 `flutter build apk` |
@@ -70,9 +71,16 @@ cd app && flutter analyze && flutter test
 - [x] Rust 核心库：目录扫描（增量 / 剪枝保护）、元数据与封面探测、SQLite 索引、歌词解析（44 项测试）
 - [x] FFI 层：flutter_rust_bridge 2.13.0，Dart 直接使用 core 的类型（`#[frb(mirror)]`）
 - [x] 曲库界面：授权引导 → 扫描 → 曲库统计 → 列表 / 搜索（真机验证：464 首 / 10.0 GB）
-- [ ] 播放：音频输出、后台播放、通知栏控制
+- [x] 播放（`rust/audio`，17 项测试）：symphonia 解码 + 无锁环形缓冲 + Oboe 输出、播放队列、播放 / 暂停 / 上下一首 / 跳转 / 循环模式、底部播放条与列表高亮
+- [ ] 后台播放与通知栏控制（需要 Kotlin 前台服务 + MediaSession）
 - [ ] 专辑 / 艺术家页、播放列表、继续播放
 - [ ] 封面显示（core 已能探测封面，尚未解码展示）
+
+### 播放能放哪些格式
+
+解码用 symphonia，**支持**：mp3 / flac / wav / aiff / m4a(mp4+aac+alac) / ogg(vorbis)。
+**不支持**：opus、ape、wma、dsf/dff、mpc —— symphonia 没有这些解码器，扫得到但播不了，
+播放失败时会在底部播放条上直接显示原因，不会静默失败。
 
 ## 几个必须知道的坑
 
@@ -85,3 +93,23 @@ cd app && flutter analyze && flutter test
   `services.gradle.org` 在本机连接超时，`mirrors.cloud.tencent.com/gradle/` 正常。
 - 首次 `flutter build apk` 会下载 Gradle 9.3.1 + AGP 9.1.0 + Kotlin 依赖（约数 GB、十余分钟），
   之后增量构建在秒级。
+- **C++ 运行时必须自己链**（`rust/ffi/build.rs`）：Oboe 是 C++ 库，而 cargo 在 Android 上用 NDK 的
+  `clang`（C 驱动）做最终链接，不会像 `clang++` 那样自动带上 libc++。少了这一步，`.so` 里会留下
+  `__cxa_pure_virtual` 这类未解析符号，**编得过、装得上，一启动就 `dlopen failed`**。
+  排查手法（改完链接参数后建议都跑一遍，确认符号已静态解析）：
+  ```bash
+  unzip -p app/build/app/outputs/flutter-apk/app-debug.apk lib/arm64-v8a/libmusicplayer_ffi.so > /tmp/x.so
+  llvm-readelf --dyn-syms /tmp/x.so | awk '$7=="UND" {print $8}' | grep -E 'cxa|_Z'
+  # 只剩 __cxa_atexit/__cxa_finalize（由 Android 的 libc.so 提供）才是正常的
+  ```
+- **`symphonia` 需要 rustc ≥ 1.85**：`rust/audio/Cargo.toml` 单独抬高了这个 crate 的 `rust-version`，
+  `core` / `ffi` 仍保持 workspace 的 1.82，别在 workspace 层面统一抬高。
+- **Oboe 的立体声回调帧类型是 `(f32, f32)`**（帧切片，不是扁平采样），
+  且回调里不能分配内存——所以交错缓冲要预先分配、越界部分补静音。
+- 真机验证播放是否真的在出声（不用听）：
+  ```bash
+  adb shell dumpsys media.audio_flinger | grep -E 'qprs.*actual_seconds'
+  # 隔 20 秒再跑一次，actual_seconds 的增量应约等于 20 秒
+  ```
+- **小米（HyperOS）会拒绝 adb 注入的点击**（`SecurityException: ... INJECT_EVENTS`），
+  自动点击不可用，涉及播放控制的真机验证需要手动点。

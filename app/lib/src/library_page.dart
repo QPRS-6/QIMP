@@ -1,6 +1,12 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
+
+// Flutter 的 material 也导出了一个 `RepeatMode`（重复动画用）。
+// 这里要用的是播放器的循环模式，所以把 Flutter 那个藏起来，避免歧义。
+import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:musicplayer/src/app_info.dart';
+import 'package:musicplayer/src/now_playing_bar.dart';
 import 'package:musicplayer/src/rust/api/library.dart';
+import 'package:musicplayer/src/rust/api/player.dart';
 import 'package:musicplayer/src/storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -33,6 +39,12 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   List<String> _roots = const <String>[];
   final TextEditingController _search = TextEditingController();
 
+  /// 播放状态快照。只让底部播放条监听它，避免每 500ms 重建整个曲目列表。
+  final ValueNotifier<PlayerSnapshot?> _player = ValueNotifier<PlayerSnapshot?>(
+    null,
+  );
+  Timer? _ticker;
+
   @override
   void initState() {
     super.initState();
@@ -43,6 +55,8 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _ticker?.cancel();
+    _player.dispose();
     _search.dispose();
     super.dispose();
   }
@@ -64,8 +78,16 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
       // 数据库放应用私有目录：不需要权限，也不会被别的应用改动。
       final dir = await getApplicationSupportDirectory();
       openLibrary(dbPath: '${dir.path}/library.db');
+      // 打开音频设备（幂等）。放在权限之后：没权限时不该占用音频设备。
+      openPlayer();
       _roots = suggestScanRoots();
       _reload();
+      // 播放进度由轮询快照提供：500ms 一次，肉眼看进度条足够顺滑。
+      _ticker ??= Timer.periodic(
+        const Duration(milliseconds: 500),
+        (_) => _refreshPlayer(),
+      );
+      _refreshPlayer();
       setState(() {
         _hasAccess = true;
         _error = null;
@@ -113,6 +135,59 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// 轮询播放状态。引擎还没初始化时静默忽略——首屏可能还没走到 `openPlayer`。
+  void _refreshPlayer() {
+    try {
+      _player.value = playerSnapshot();
+    } catch (_) {
+      // 忽略：下一轮会再试，不值得往界面上抛错误。
+    }
+  }
+
+  /// 统一的播放操作包装：出错提示用户，结束后刷新一次快照。
+  void _runPlayerAction(void Function() action) {
+    try {
+      action();
+    } catch (e) {
+      _toast('$e');
+    }
+    _refreshPlayer();
+  }
+
+  /// 从当前列表的第 `index` 首开始播放（列表本身就是播放队列）。
+  void _playAt(int index) {
+    try {
+      setPlayQueue(
+        entries: [
+          for (final track in _tracks)
+            QueueEntry(id: track.id, path: track.path),
+        ],
+        startAt: index,
+        autoplay: true,
+      );
+    } catch (e) {
+      _toast('无法播放：$e');
+    }
+    _refreshPlayer();
+  }
+
+  /// 循环模式：关闭 → 列表循环 → 单曲循环 → 关闭。
+  void _cycleRepeat() {
+    const order = [RepeatMode.off, RepeatMode.all, RepeatMode.one];
+    final current = _player.value?.repeat ?? RepeatMode.off;
+    final next = order[(order.indexOf(current) + 1) % order.length];
+    _runPlayerAction(() => playerSetRepeat(mode: next));
+  }
+
+  /// 按 id 在当前列表里找曲目（底部播放条显示标题用）。
+  Track? _trackById(int? id) {
+    if (id == null || id <= 0) return null;
+    for (final track in _tracks) {
+      if (track.id == id) return track;
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_hasAccess == null) {
@@ -133,6 +208,11 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
             onPressed: _busy ? null : () => _scan(full: false),
             icon: const Icon(Icons.refresh),
           ),
+          IconButton(
+            tooltip: '全量扫描（重新解析所有文件）',
+            onPressed: _busy ? null : () => _scan(full: true),
+            icon: const Icon(Icons.library_music),
+          ),
         ],
       ),
       body: Column(
@@ -151,19 +231,34 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
               ),
             ),
           ),
-          Expanded(child: _TrackList(tracks: _tracks, emptyHint: _emptyHint())),
+          Expanded(
+            child: ValueListenableBuilder<PlayerSnapshot?>(
+              valueListenable: _player,
+              builder: (context, snapshot, _) => _TrackList(
+                tracks: _tracks,
+                emptyHint: _emptyHint(),
+                playingId: snapshot?.trackId ?? 0,
+                // 正在播放的那首在列表里会被标出来
+                playingState: snapshot?.state,
+                onPlay: _playAt,
+              ),
+            ),
+          ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _busy ? null : () => _scan(full: true),
-        icon: _busy
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.library_music),
-        label: Text(_busy ? '扫描中…' : '全量扫描'),
+      // 底部播放条固定在屏幕下边缘，FAB 会让位（扫描入口已移到 AppBar）
+      bottomNavigationBar: ValueListenableBuilder<PlayerSnapshot?>(
+        valueListenable: _player,
+        builder: (context, snapshot, _) => NowPlayingBar(
+          snapshot: snapshot,
+          track: _trackById(snapshot?.trackId),
+          onToggle: () => _runPlayerAction(playerToggle),
+          onNext: () => _runPlayerAction(playerNext),
+          onPrevious: () => _runPlayerAction(playerPrevious),
+          onSeek: (positionMs) =>
+              _runPlayerAction(() => playerSeek(positionMs: positionMs)),
+          onCycleRepeat: _cycleRepeat,
+        ),
       ),
     );
   }
@@ -272,10 +367,24 @@ class _StatsBar extends StatelessWidget {
 }
 
 class _TrackList extends StatelessWidget {
-  const _TrackList({required this.tracks, required this.emptyHint});
+  const _TrackList({
+    required this.tracks,
+    required this.emptyHint,
+    required this.playingId,
+    required this.onPlay,
+    this.playingState,
+  });
 
   final List<Track> tracks;
   final String emptyHint;
+
+  /// 正在播放的曲目 id（`0` 表示当前没有播放项）。
+  final int playingId;
+
+  /// 播放状态，用来区分「在播」和「暂停」。
+  final PlayerState? playingState;
+
+  final ValueChanged<int> onPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -289,15 +398,37 @@ class _TrackList extends StatelessWidget {
     }
     return ListView.builder(
       itemCount: tracks.length,
-      itemBuilder: (context, index) => _TrackTile(track: tracks[index]),
+      itemBuilder: (context, index) {
+        final track = tracks[index];
+        final isPlaying = track.id == playingId;
+        return _TrackTile(
+          track: track,
+          playing: isPlaying,
+          paused: isPlaying && playingState == PlayerState.paused,
+          // 点哪首就从哪首开始播：整个列表就是播放队列
+          onTap: () => onPlay(index),
+        );
+      },
     );
   }
 }
 
 class _TrackTile extends StatelessWidget {
-  const _TrackTile({required this.track});
+  const _TrackTile({
+    required this.track,
+    required this.onTap,
+    this.playing = false,
+    this.paused = false,
+  });
 
   final Track track;
+  final VoidCallback onTap;
+
+  /// 是否是当前播放项。
+  final bool playing;
+
+  /// 当前播放项是否处于暂停。
+  final bool paused;
 
   @override
   Widget build(BuildContext context) {
@@ -306,13 +437,22 @@ class _TrackTile extends StatelessWidget {
       if (track.album?.isNotEmpty ?? false) track.album!,
       if (track.hasCover) '含封面',
     ].join(' · ');
+    final accent = Theme.of(context).colorScheme.primary;
     return ListTile(
       dense: true,
-      leading: const Icon(Icons.music_note),
+      onTap: onTap,
+      selected: playing,
+      leading: Icon(
+        playing
+            ? (paused ? Icons.pause_circle_outline : Icons.equalizer)
+            : Icons.music_note,
+        color: playing ? accent : null,
+      ),
       title: Text(
         track.title.isEmpty ? track.path.split('/').last : track.title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
+        style: playing ? TextStyle(color: accent) : null,
       ),
       subtitle: Text(
         subtitle.isEmpty ? track.path : subtitle,

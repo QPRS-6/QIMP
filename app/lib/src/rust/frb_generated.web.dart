@@ -8,6 +8,7 @@
 
 import 'api/app.dart';
 import 'api/library.dart';
+import 'api/player.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -67,6 +68,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<QueueEntry> dco_decode_list_queue_entry(dynamic raw);
+
+  @protected
   List<Track> dco_decode_list_track(dynamic raw);
 
   @protected
@@ -77,6 +81,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int? dco_decode_opt_box_autoadd_u_8(dynamic raw);
+
+  @protected
+  PlayerSnapshot dco_decode_player_snapshot(dynamic raw);
+
+  @protected
+  PlayerState dco_decode_player_state(dynamic raw);
+
+  @protected
+  QueueEntry dco_decode_queue_entry(dynamic raw);
+
+  @protected
+  RepeatMode dco_decode_repeat_mode(dynamic raw);
 
   @protected
   ScanMode dco_decode_scan_mode(dynamic raw);
@@ -148,6 +164,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<QueueEntry> sse_decode_list_queue_entry(SseDeserializer deserializer);
+
+  @protected
   List<Track> sse_decode_list_track(SseDeserializer deserializer);
 
   @protected
@@ -158,6 +177,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int? sse_decode_opt_box_autoadd_u_8(SseDeserializer deserializer);
+
+  @protected
+  PlayerSnapshot sse_decode_player_snapshot(SseDeserializer deserializer);
+
+  @protected
+  PlayerState sse_decode_player_state(SseDeserializer deserializer);
+
+  @protected
+  QueueEntry sse_decode_queue_entry(SseDeserializer deserializer);
+
+  @protected
+  RepeatMode sse_decode_repeat_mode(SseDeserializer deserializer);
 
   @protected
   ScanMode sse_decode_scan_mode(SseDeserializer deserializer);
@@ -232,6 +263,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_queue_entry(
+    List<QueueEntry> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_track(List<Track> self, SseSerializer serializer);
 
   @protected
@@ -242,6 +279,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_opt_box_autoadd_u_8(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_player_snapshot(
+    PlayerSnapshot self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_player_state(PlayerState self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_queue_entry(QueueEntry self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_repeat_mode(RepeatMode self, SseSerializer serializer);
 
   @protected
   void sse_encode_scan_mode(ScanMode self, SseSerializer serializer);

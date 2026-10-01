@@ -5,6 +5,7 @@
 
 import 'api/app.dart';
 import 'api/library.dart';
+import 'api/player.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -70,7 +71,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 596841481;
+  int get rustContentHash => -1919764982;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -102,6 +103,26 @@ abstract class RustLibApi extends BaseApi {
 
   void crateApiLibraryOpenLibrary({required String dbPath});
 
+  void crateApiPlayerOpenPlayer();
+
+  void crateApiPlayerPlayerNext();
+
+  void crateApiPlayerPlayerPause();
+
+  void crateApiPlayerPlayerPlay();
+
+  void crateApiPlayerPlayerPrevious();
+
+  void crateApiPlayerPlayerSeek({required int positionMs});
+
+  void crateApiPlayerPlayerSetRepeat({required RepeatMode mode});
+
+  PlayerSnapshot crateApiPlayerPlayerSnapshot();
+
+  void crateApiPlayerPlayerStop();
+
+  void crateApiPlayerPlayerToggle();
+
   Future<ScanSummary> crateApiLibraryScanLibrary({
     required List<String> roots,
     required ScanMode mode,
@@ -110,6 +131,12 @@ abstract class RustLibApi extends BaseApi {
   List<Track> crateApiLibrarySearchTracks({
     required String query,
     required int limit,
+  });
+
+  void crateApiPlayerSetPlayQueue({
+    required List<QueueEntry> entries,
+    required int startAt,
+    required bool autoplay,
   });
 
   List<String> crateApiLibrarySuggestScanRoots();
@@ -315,6 +342,228 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "open_library", argNames: ["dbPath"]);
 
   @override
+  void crateApiPlayerOpenPlayer() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerOpenPlayerConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerOpenPlayerConstMeta =>
+      const TaskConstMeta(debugName: "open_player", argNames: []);
+
+  @override
+  void crateApiPlayerPlayerNext() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerNextConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerNextConstMeta =>
+      const TaskConstMeta(debugName: "player_next", argNames: []);
+
+  @override
+  void crateApiPlayerPlayerPause() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerPauseConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerPauseConstMeta =>
+      const TaskConstMeta(debugName: "player_pause", argNames: []);
+
+  @override
+  void crateApiPlayerPlayerPlay() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerPlayConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerPlayConstMeta =>
+      const TaskConstMeta(debugName: "player_play", argNames: []);
+
+  @override
+  void crateApiPlayerPlayerPrevious() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerPreviousConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerPreviousConstMeta =>
+      const TaskConstMeta(debugName: "player_previous", argNames: []);
+
+  @override
+  void crateApiPlayerPlayerSeek({required int positionMs}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_CastedPrimitive_u_64(positionMs, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerSeekConstMeta,
+        argValues: [positionMs],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerSeekConstMeta =>
+      const TaskConstMeta(debugName: "player_seek", argNames: ["positionMs"]);
+
+  @override
+  void crateApiPlayerPlayerSetRepeat({required RepeatMode mode}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_repeat_mode(mode, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerSetRepeatConstMeta,
+        argValues: [mode],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerSetRepeatConstMeta =>
+      const TaskConstMeta(debugName: "player_set_repeat", argNames: ["mode"]);
+
+  @override
+  PlayerSnapshot crateApiPlayerPlayerSnapshot() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_player_snapshot,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerSnapshotConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerSnapshotConstMeta =>
+      const TaskConstMeta(debugName: "player_snapshot", argNames: []);
+
+  @override
+  void crateApiPlayerPlayerStop() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerStopConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerStopConstMeta =>
+      const TaskConstMeta(debugName: "player_stop", argNames: []);
+
+  @override
+  void crateApiPlayerPlayerToggle() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerPlayerToggleConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerPlayerToggleConstMeta =>
+      const TaskConstMeta(debugName: "player_toggle", argNames: []);
+
+  @override
   Future<ScanSummary> crateApiLibraryScanLibrary({
     required List<String> roots,
     required ScanMode mode,
@@ -328,7 +577,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 9,
+            funcId: 19,
             port: port_,
           );
         },
@@ -359,7 +608,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(query, serializer);
           sse_encode_u_32(limit, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_track,
@@ -379,12 +628,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  void crateApiPlayerSetPlayQueue({
+    required List<QueueEntry> entries,
+    required int startAt,
+    required bool autoplay,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_list_queue_entry(entries, serializer);
+          sse_encode_u_32(startAt, serializer);
+          sse_encode_bool(autoplay, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiPlayerSetPlayQueueConstMeta,
+        argValues: [entries, startAt, autoplay],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiPlayerSetPlayQueueConstMeta => const TaskConstMeta(
+    debugName: "set_play_queue",
+    argNames: ["entries", "startAt", "autoplay"],
+  );
+
+  @override
   List<String> crateApiLibrarySuggestScanRoots() {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_String,
@@ -506,6 +786,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<QueueEntry> dco_decode_list_queue_entry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_queue_entry).toList();
+  }
+
+  @protected
   List<Track> dco_decode_list_track(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_track).toList();
@@ -527,6 +813,47 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   int? dco_decode_opt_box_autoadd_u_8(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_u_8(raw);
+  }
+
+  @protected
+  PlayerSnapshot dco_decode_player_snapshot(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    return PlayerSnapshot(
+      state: dco_decode_player_state(arr[0]),
+      positionMs: dco_decode_CastedPrimitive_u_64(arr[1]),
+      index: dco_decode_u_32(arr[2]),
+      queueLen: dco_decode_u_32(arr[3]),
+      trackId: dco_decode_CastedPrimitive_i_64(arr[4]),
+      repeat: dco_decode_repeat_mode(arr[5]),
+      error: dco_decode_opt_String(arr[6]),
+    );
+  }
+
+  @protected
+  PlayerState dco_decode_player_state(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return PlayerState.values[raw as int];
+  }
+
+  @protected
+  QueueEntry dco_decode_queue_entry(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return QueueEntry(
+      id: dco_decode_CastedPrimitive_i_64(arr[0]),
+      path: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  RepeatMode dco_decode_repeat_mode(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return RepeatMode.values[raw as int];
   }
 
   @protected
@@ -753,6 +1080,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<QueueEntry> sse_decode_list_queue_entry(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <QueueEntry>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_queue_entry(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<Track> sse_decode_list_track(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -795,6 +1134,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     } else {
       return null;
     }
+  }
+
+  @protected
+  PlayerSnapshot sse_decode_player_snapshot(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_state = sse_decode_player_state(deserializer);
+    var var_positionMs = sse_decode_CastedPrimitive_u_64(deserializer);
+    var var_index = sse_decode_u_32(deserializer);
+    var var_queueLen = sse_decode_u_32(deserializer);
+    var var_trackId = sse_decode_CastedPrimitive_i_64(deserializer);
+    var var_repeat = sse_decode_repeat_mode(deserializer);
+    var var_error = sse_decode_opt_String(deserializer);
+    return PlayerSnapshot(
+      state: var_state,
+      positionMs: var_positionMs,
+      index: var_index,
+      queueLen: var_queueLen,
+      trackId: var_trackId,
+      repeat: var_repeat,
+      error: var_error,
+    );
+  }
+
+  @protected
+  PlayerState sse_decode_player_state(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return PlayerState.values[inner];
+  }
+
+  @protected
+  QueueEntry sse_decode_queue_entry(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_CastedPrimitive_i_64(deserializer);
+    var var_path = sse_decode_String(deserializer);
+    return QueueEntry(id: var_id, path: var_path);
+  }
+
+  @protected
+  RepeatMode sse_decode_repeat_mode(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return RepeatMode.values[inner];
   }
 
   @protected
@@ -1022,6 +1404,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_queue_entry(
+    List<QueueEntry> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_queue_entry(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_track(List<Track> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
@@ -1058,6 +1452,40 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     if (self != null) {
       sse_encode_box_autoadd_u_8(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_player_snapshot(
+    PlayerSnapshot self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_player_state(self.state, serializer);
+    sse_encode_CastedPrimitive_u_64(self.positionMs, serializer);
+    sse_encode_u_32(self.index, serializer);
+    sse_encode_u_32(self.queueLen, serializer);
+    sse_encode_CastedPrimitive_i_64(self.trackId, serializer);
+    sse_encode_repeat_mode(self.repeat, serializer);
+    sse_encode_opt_String(self.error, serializer);
+  }
+
+  @protected
+  void sse_encode_player_state(PlayerState self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_queue_entry(QueueEntry self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_CastedPrimitive_i_64(self.id, serializer);
+    sse_encode_String(self.path, serializer);
+  }
+
+  @protected
+  void sse_encode_repeat_mode(RepeatMode self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
