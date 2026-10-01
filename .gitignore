@@ -1,0 +1,24 @@
+# Rust
+**/target/
+
+# Flutter / Dart
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+*.iml
+
+# Android (生成的 .so 不入库)
+android/.gradle/
+android/local.properties
+android/.idea/
+android/app/src/main/jniLibs/
+*.jks
+*.keystore
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp

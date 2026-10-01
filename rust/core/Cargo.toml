@@ -1,0 +1,33 @@
+[package]
+name = "musicplayer-core"
+description = "纯本地音乐播放器的核心逻辑：扫描 / 元数据 / 索引 / 歌词。不依赖任何 Android 或 UI 代码。"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "musicplayer_core"
+crate-type = ["rlib"]
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+lofty.workspace = true
+walkdir.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = "warn"
+unwrap_used = "warn"
+expect_used = "warn"

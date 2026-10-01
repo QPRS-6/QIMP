@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "GPL-3.0-or-later"
+authors = ["qprs"]
+repository = "https://github.com/qprs/ro.qprs.musicplayer"
+
+[workspace.dependencies]
+musicplayer-core = { path = "core" }
+
+# 纯逻辑核心，必须保持“无平台依赖”，以便在宿主机上直接跑单元测试
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lofty = "0.25"
+walkdir = "2"
+rusqlite = { version = "0.40", features = ["bundled"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
