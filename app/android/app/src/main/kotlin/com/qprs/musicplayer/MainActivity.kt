@@ -7,15 +7,21 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * 只做一件事：把“是否已获得存储访问权 / 跳去申请”暴露给 Dart。
+ * 只做两件事：
+ * - 把“是否已获得存储访问权 / 跳去申请”暴露给 Dart；
+ * - 开始播放时把 [PlaybackService] 提到前台（后台播放 + 通知栏控制）。
  *
  * 这里刻意不引入 permission_handler 之类的插件：
- * 需求只有两个方法，手写一个 MethodChannel 依赖更少，也更好跟进 AGP 大版本升级。
+ * 需求只有几个方法，手写 MethodChannel 依赖更少，也更好跟进 AGP 大版本升级。
+ *
+ * 注意：通知栏上的按钮**不经过这里**，它们直接走 JNI 打到 Rust（见 [PlaybackBridge]），
+ * 这样即使用户把 App 从任务列表划掉、Flutter 引擎没了，控制也依然有效。
  */
 class MainActivity : FlutterActivity() {
 
@@ -33,6 +39,27 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PLAYBACK_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        startPlaybackService()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /**
+     * 启动播放前台服务。必须在 App 处于前台时调用（用户点了播放），
+     * 否则 Android 12+ 会抛 ForegroundServiceStartNotAllowedException。
+     * 服务只负责“别被杀 + 显示通知”，播放本身始终在 Rust 手里。
+     */
+    private fun startPlaybackService() {
+        val intent = Intent(this, PlaybackService::class.java).setAction(PlaybackService.ACTION_START)
+        ContextCompat.startForegroundService(this, intent)
     }
 
     /** Android 11+ 看“所有文件访问”特殊权限；更低版本看运行时读存储权限。 */
@@ -57,6 +84,7 @@ class MainActivity : FlutterActivity() {
 
     private companion object {
         const val CHANNEL = "com.qprs.musicplayer/storage"
+        const val PLAYBACK_CHANNEL = "com.qprs.musicplayer/playback"
         const val REQUEST_CODE = 1001
     }
 }

@@ -10,6 +10,13 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
+    <!-- 后台播放：把播放提升为前台服务，锁屏 / 息屏时不被系统回收。
+         Android 14+ 必须同时声明服务类型对应的权限，否则 startForeground 直接抛异常。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Android 13+ 通知需要运行时权限。媒体通知即使被拒也会出现在媒体控制区，
+         所以这里只声明、不强制申请，避免为了一个通知打断用户。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="本地音乐播放器"
@@ -37,6 +44,25 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 播放前台服务：媒体会话 + 通知栏 / 锁屏 / 耳机按键控制。
+             exported=true 是 MediaBrowserService 的惯例（车机、蓝牙要靠它找到会话）；
+             服务本身不接受任何外部命令参数，所有操作都落到 Rust 引擎上。 -->
+        <service
+            android:name=".PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+        <!-- 耳机 / 蓝牙的媒体按键：系统在没有活动会话时会把这个广播发给它。 -->
+        <receiver
+            android:name="androidx.media.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

@@ -9,4 +9,11 @@ pub mod app;
 
 pub mod library;
 
+/// JNI 接口（给 Android 前台服务 / 通知栏用）。只在 Android 上编译：
+/// 宿主机没有 JVM，也没必要为它拉 `jni` 依赖。
+#[cfg(target_os = "android")]
+pub mod native;
+
+pub mod playback_bridge;
+
 pub mod player;

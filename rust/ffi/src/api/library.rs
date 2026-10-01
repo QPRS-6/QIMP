@@ -33,6 +33,14 @@ fn with_db<T>(action: impl FnOnce(&Db) -> Result<T, String>) -> Result<T, String
     action(db)
 }
 
+/// 按 id 取一首歌。给非 Dart 的 FFI 使用者（Android 通知栏）用：
+/// 曲库没打开、或 id 不存在都返回 `None`。
+pub(crate) fn track_or_none(id: i64) -> Option<Track> {
+    with_db(|db| db.track_by_id(id).map_err(|e| e.to_string()))
+        .ok()
+        .flatten()
+}
+
 /// Android 上常见的音乐目录，**只返回真实存在的那些**，UI 可直接拿来当扫描根。
 ///
 /// 目录给的是真实路径而不是 SAF 的 `content://`：核心的扫描器基于 `std::fs`，

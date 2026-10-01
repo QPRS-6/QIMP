@@ -44,6 +44,12 @@ kotlin {
     }
 }
 
+dependencies {
+    // 前台服务 + 通知栏控制用的媒体会话（MediaSessionCompat / MediaStyle / MediaButtonReceiver）。
+    // Flutter 自带的依赖里没有它，但它不大，而且是这套通知栏方案的官方库。
+    implementation("androidx.media:media:1.7.0")
+}
+
 flutter {
     source = "../.."
 }

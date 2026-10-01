@@ -17,7 +17,7 @@ pub use musicplayer_audio::{PlayerSnapshot, PlayerState, RepeatMode};
 static ENGINE: Mutex<Option<Arc<Engine>>> = Mutex::new(None);
 
 /// 取引擎句柄。
-fn engine() -> Result<Arc<Engine>, String> {
+pub(crate) fn engine() -> Result<Arc<Engine>, String> {
     ENGINE
         .lock()
         .map_err(|_| "播放引擎内部状态异常".to_string())?
@@ -107,6 +107,12 @@ pub fn player_set_repeat(mode: RepeatMode) -> Result<(), String> {
 #[frb(sync)]
 pub fn player_snapshot() -> Result<PlayerSnapshot, String> {
     Ok(engine()?.snapshot())
+}
+
+/// 给非 Dart 的 FFI 使用者（Android 通知栏 / 前台服务）读快照：
+/// 引擎没起来时返回 `None`，避免它们各自处理一遍错误。
+pub(crate) fn snapshot_or_none() -> Option<PlayerSnapshot> {
+    engine().ok().map(|engine| engine.snapshot())
 }
 
 // ---------------------------------------------------------------------------

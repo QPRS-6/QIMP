@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:musicplayer/src/app_info.dart';
 import 'package:musicplayer/src/now_playing_bar.dart';
+import 'package:musicplayer/src/playback_service.dart';
 import 'package:musicplayer/src/rust/api/library.dart';
 import 'package:musicplayer/src/rust/api/player.dart';
 import 'package:musicplayer/src/storage.dart';
@@ -172,7 +173,13 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   }
 
   /// 统一的播放操作包装：出错提示用户，结束后刷新一次快照。
-  void _runPlayerAction(void Function() action) {
+  ///
+  /// `ensureService` 用于「可能会让声音响起来」的操作（播放 / 暂停 / 切歌）：
+  /// 顺手确认一下前台服务在跑，否则息屏后系统随时会回收进程。
+  void _runPlayerAction(void Function() action, {bool ensureService = false}) {
+    if (ensureService) {
+      PlaybackService.start();
+    }
     try {
       action();
     } catch (e) {
@@ -183,6 +190,8 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
 
   /// 从当前列表的第 `index` 首开始播放（列表本身就是播放队列）。
   void _playAt(int index) {
+    // 用户点了某一首：此时 App 一定在前台，正好可以拉起前台服务。
+    PlaybackService.start();
     try {
       setPlayQueue(
         entries: [
@@ -295,9 +304,10 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
         builder: (context, snapshot, _) => NowPlayingBar(
           snapshot: snapshot,
           track: _trackById(snapshot?.trackId),
-          onToggle: () => _runPlayerAction(playerToggle),
-          onNext: () => _runPlayerAction(playerNext),
-          onPrevious: () => _runPlayerAction(playerPrevious),
+          // 这三个都可能让声音响起来：顺手确认前台服务在跑。
+          onToggle: () => _runPlayerAction(playerToggle, ensureService: true),
+          onNext: () => _runPlayerAction(playerNext, ensureService: true),
+          onPrevious: () => _runPlayerAction(playerPrevious, ensureService: true),
           onSeek: _seekTo,
           onCycleRepeat: _cycleRepeat,
         ),
