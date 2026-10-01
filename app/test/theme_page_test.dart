@@ -111,7 +111,7 @@ void main() {
         // 那些跟这颗按钮没关系。
         home: Scaffold(
           appBar: AppBar(
-            title: const Text('本地音乐播放器'),
+            title: const Text('QIMP'),
             actions: [ThemeButton(settings: settings)],
           ),
         ),

@@ -8,7 +8,7 @@ edition = "2021"
 rust-version = "1.82"
 license = "GPL-3.0-or-later"
 authors = ["qprs"]
-repository = "https://github.com/qprs/ro.qprs.musicplayer"
+repository = "https://github.com/QPRS-6/QIMP"
 
 [workspace.dependencies]
 musicplayer-core = { path = "core" }

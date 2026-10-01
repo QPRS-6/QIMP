@@ -1,6 +1,6 @@
-# ro.qprs.musicplayer
+# QIMP
 
-Android 端**纯本地**音乐播放器（应用名 **QIMP**）：Rust 负责全部逻辑（扫描 / 元数据 / 索引 / 歌词），Flutter 只负责界面。
+Android 端**纯本地**音乐播放器（仓库名从 `ro.qprs.musicplayer` 改成了 **QIMP**）：Rust 负责全部逻辑（扫描 / 元数据 / 索引 / 歌词），Flutter 只负责界面。
 
 ## 目录结构
 

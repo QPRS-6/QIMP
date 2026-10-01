@@ -42,7 +42,7 @@ internal fun widgetShape(minHeightDp: Int): WidgetShape =
  * 划掉之后小部件照样得显示、照样得能按。按钮点下去送到 [PlaybackService]，
  * 与通知栏上那几个按钮走的是**同一组动作**，于是「按一下的效果」只有一份实现。
  *
- * 已知边界：进程被系统回收之后 Rust 引擎也没了，这时小部件退化成「本地音乐播放器」
+ * 已知边界：进程被系统回收之后 Rust 引擎也没了，这时小部件退化成「QIMP」
  * 且按键无效——和通知栏一样，播放器本身没在运行时，确实没有东西可控制。
  */
 abstract class PlaybackWidgetProvider : AppWidgetProvider() {

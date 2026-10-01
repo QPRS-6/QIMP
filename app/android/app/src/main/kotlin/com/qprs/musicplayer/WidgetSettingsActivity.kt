@@ -92,7 +92,8 @@ class WidgetSettingsActivity : Activity() {
      * 把真正的小部件布局 inflate 进预览框。
      *
      * 预览用**卡片式**那一份：封面、歌名、整排按钮它都摆全了，要看的就这三样。
-     * 歌名换成一行示例文字——预览里写着「ro.qprs.musicplayer」只会让人以为改错了东西。
+     * 歌名换成一行示例文字——预览里写着应用名（布局里那行静态文字是 `@string/app_name`）
+     * 只会让人以为改错了东西。
      */
     private fun inflatePreview() {
         val container = findViewById<FrameLayout>(R.id.preview)
