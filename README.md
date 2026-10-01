@@ -41,6 +41,10 @@ cd rust && cargo test --workspace
 # Rust 侧格式 / 静态检查
 cd rust && cargo fmt --all && cargo clippy --workspace --all-targets
 
+# 抽查真实音乐文件的「精确跳转」落点精度（默认跳过，需指定文件）
+cd rust && MUSIC_FILE=/tmp/song.mp3 cargo test -p musicplayer-audio \
+  --test real_file_seek -- --ignored --nocapture
+
 # 改过 rust/ffi 的接口后，重新生成 Dart 绑定
 cd app && flutter_rust_bridge_codegen generate
 
@@ -81,6 +85,10 @@ cd app && flutter analyze && flutter test
 解码用 symphonia，**支持**：mp3 / flac / wav / aiff / m4a(mp4+aac+alac) / ogg(vorbis)。
 **不支持**：opus、ape、wma、dsf/dff、mpc —— symphonia 没有这些解码器，扫得到但播不了，
 播放失败时会在底部播放条上直接显示原因，不会静默失败。
+
+**被截断的文件**（下载没下完）按“这首放完了”处理：能播的部分照播，之后自动接下一首，
+不会因为一个坏文件把队列卡住。跳转落点实测：真 mp3 差 -31~-68ms、真 flac 差 -18~-86ms
+（精确跳转只能落在帧 / 包边界上，且只会偏早），UI 上的 400ms 容差就是按这个定的。
 
 ## 几个必须知道的坑
 

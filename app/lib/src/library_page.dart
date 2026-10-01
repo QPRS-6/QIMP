@@ -43,6 +43,11 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   final ValueNotifier<PlayerSnapshot?> _player = ValueNotifier<PlayerSnapshot?>(
     null,
   );
+
+  /// 正在播放的曲目（按 id 缓存），用于列表被搜索过滤时仍能在播放条上显示。
+  int _playingTrackId = 0;
+  Track? _playingTrack;
+
   Timer? _ticker;
 
   /// 跳转后的一次性补刷：`seek` 由播放线程异步执行，
@@ -143,10 +148,27 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   /// 轮询播放状态。引擎还没初始化时静默忽略——首屏可能还没走到 `openPlayer`。
   void _refreshPlayer() {
     try {
-      _player.value = playerSnapshot();
+      final snapshot = playerSnapshot();
+      _rememberPlayingTrack(snapshot);
+      _player.value = snapshot;
     } catch (_) {
       // 忽略：下一轮会再试，不值得往界面上抛错误。
     }
+  }
+
+  /// 记住正在播放的曲目。
+  ///
+  /// 搜索会把列表过滤成不含正在播放的那首；此时播放条就查不到标题与时长，
+  /// 进度条会瞬间失去刻度（滑块贴到最左边）。这里留一份缓存兜底。
+  void _rememberPlayingTrack(PlayerSnapshot snapshot) {
+    if (snapshot.trackId <= 0) {
+      _playingTrackId = 0;
+      _playingTrack = null;
+      return;
+    }
+    if (snapshot.trackId == _playingTrackId) return;
+    _playingTrackId = snapshot.trackId;
+    _playingTrack = _lookupTrack(snapshot.trackId);
   }
 
   /// 统一的播放操作包装：出错提示用户，结束后刷新一次快照。
@@ -193,8 +215,16 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   }
 
   /// 按 id 在当前列表里找曲目（底部播放条显示标题用）。
+  ///
+  /// 列表被搜索过滤后可能找不到正在播放的那首，此时退回缓存的那一份。
   Track? _trackById(int? id) {
     if (id == null || id <= 0) return null;
+    final found = _lookupTrack(id);
+    if (found != null) return found;
+    return id == _playingTrackId ? _playingTrack : null;
+  }
+
+  Track? _lookupTrack(int id) {
     for (final track in _tracks) {
       if (track.id == id) return track;
     }

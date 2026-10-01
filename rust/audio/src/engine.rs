@@ -84,9 +84,19 @@ impl Session {
             return Ok(FillOutcome::Finished);
         }
 
-        let Some(chunk) = self.decoder.next_chunk()? else {
-            self.source_done = true;
-            return Ok(FillOutcome::Finished);
+        let chunk = match self.decoder.next_chunk() {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => {
+                self.source_done = true;
+                return Ok(FillOutcome::Finished);
+            }
+            // 文件被截断（下载没下完之类，手机音乐库里很常见）：已经解出来的部分照播，
+            // 之后当作「这首放完了」，让队列继续往下走，而不是弹一条错误把播放卡住。
+            Err(AudioError::Io(err)) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                self.source_done = true;
+                return Ok(FillOutcome::Finished);
+            }
+            Err(err) => return Err(err),
         };
         map_channels(
             chunk,
@@ -692,7 +702,7 @@ mod tests {
 
     use super::*;
     use crate::output::NullOutput;
-    use crate::test_support::write_wav;
+    use crate::test_support::{write_truncated_wav, write_wav};
 
     /// 建一个可手动泵采样的输出：只有它自己取走数据，播放线程才会继续解码，
     /// 于是整条链路的时间完全由测试控制，不依赖真实时钟。
@@ -841,6 +851,34 @@ mod tests {
             "跳转不应越界到目标之后太多：{:?}",
             engine.snapshot()
         );
+    }
+
+    /// 文件被截断（下载没下完之类）：能播的部分照播，播完就当这首结束，
+    /// 而不是弹一条错误把队列卡住。
+    #[test]
+    fn truncated_track_ends_instead_of_failing() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let path = temp.path().join("cut.wav");
+        // 1 秒的文件砍掉尾部 3 KB（8kHz 8bit ≈ 0.38 秒）：解到末尾会读到 EOF。
+        write_truncated_wav(&path, 1, 3_072);
+
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+        engine
+            .replace_queue(
+                vec![QueueItem::new(1, path.to_string_lossy().to_string())],
+                0,
+                true,
+            )
+            .expect("入队并播放");
+
+        assert!(
+            pump_until(&output, 5_000, || engine.snapshot().state
+                == PlayerState::Stopped),
+            "截断文件应正常播完：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(engine.snapshot().error, None, "截断不该被当成播放错误");
     }
 
     /// 打不开的曲目要停在该曲目的错误状态并给出原因，而不是让进程崩掉。

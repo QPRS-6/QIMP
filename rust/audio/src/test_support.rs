@@ -35,3 +35,21 @@ pub fn write_wav(path: &Path, seconds: u32) {
 /// 采样率与声道数，供断言使用。
 pub const WAV_RATE: u32 = 8_000;
 pub const WAV_CHANNELS: u16 = 1;
+
+/// 写一个**尾部被截断**的 WAV：文件头声明的数据长度比真实字节数大。
+///
+/// 手机上的音乐库常年有这种文件（下载没下完）。解码走到末尾会读到 EOF，
+/// 播放层必须把它当作「这首放完了」，而不是报错把队列卡住。
+pub fn write_truncated_wav(path: &Path, seconds: u32, cut_bytes: u64) {
+    write_wav(path, seconds);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("打开测试 WAV");
+    let keep = file
+        .metadata()
+        .expect("读取测试 WAV 大小")
+        .len()
+        .saturating_sub(cut_bytes);
+    file.set_len(keep).expect("截断测试 WAV");
+}
