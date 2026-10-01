@@ -70,6 +70,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Artist> dco_decode_list_artist(dynamic raw);
 
   @protected
+  List<Playlist> dco_decode_list_playlist(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
@@ -95,6 +98,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlayerState dco_decode_player_state(dynamic raw);
+
+  @protected
+  Playlist dco_decode_playlist(dynamic raw);
 
   @protected
   QueueEntry dco_decode_queue_entry(dynamic raw);
@@ -175,6 +181,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Artist> sse_decode_list_artist(SseDeserializer deserializer);
 
   @protected
+  List<Playlist> sse_decode_list_playlist(SseDeserializer deserializer);
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
@@ -202,6 +211,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlayerState sse_decode_player_state(SseDeserializer deserializer);
+
+  @protected
+  Playlist sse_decode_playlist(SseDeserializer deserializer);
 
   @protected
   QueueEntry sse_decode_queue_entry(SseDeserializer deserializer);
@@ -285,6 +297,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_artist(List<Artist> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_playlist(List<Playlist> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -322,6 +337,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_player_state(PlayerState self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_playlist(Playlist self, SseSerializer serializer);
 
   @protected
   void sse_encode_queue_entry(QueueEntry self, SseSerializer serializer);

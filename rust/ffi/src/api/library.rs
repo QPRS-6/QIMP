@@ -16,7 +16,7 @@ use musicplayer_core::{scan_roots, Db, ScanOptions};
 // 否则生成代码引用 `crate::api::library::ScanMode` 时会撞上“私有 import”编译错误。
 // 这些名字同时也决定了 Dart 侧看到的类型名。
 pub use musicplayer_core::{
-    Album, Artist, ScanMode, ScanSummary, SortKey, SortOrder, Stats, Track,
+    Album, Artist, Playlist, ScanMode, ScanSummary, SortKey, SortOrder, Stats, Track,
 };
 
 /// 进程内唯一的曲库句柄；`None` 表示尚未打开。
@@ -158,6 +158,61 @@ pub fn library_stats() -> Result<Stats, String> {
 }
 
 // ---------------------------------------------------------------------------
+// 播放列表。
+//
+// 全是 `#[frb(sync)]`：都是本地 SQLite 的单条读写，快到不值得让 Dart 侧到处 await；
+// 界面上的抽屉与列表页都直接调用它们。
+// ---------------------------------------------------------------------------
+
+/// 所有播放列表（按名字排序）。
+#[frb(sync)]
+pub fn playlists() -> Result<Vec<Playlist>, String> {
+    with_db(|db| db.playlists().map_err(|e| e.to_string()))
+}
+
+/// 新建播放列表，返回它的 id。空名字由核心兜底成“新建列表”。
+#[frb(sync)]
+pub fn create_playlist(name: String) -> Result<i64, String> {
+    with_db(|db| db.create_playlist(&name).map_err(|e| e.to_string()))
+}
+
+/// 改名。界面负责拦住空名字：核心只会 trim，不会拒绝空串。
+#[frb(sync)]
+pub fn rename_playlist(playlist_id: i64, name: String) -> Result<(), String> {
+    with_db(|db| db.rename_playlist(playlist_id, &name).map_err(|e| e.to_string()))
+}
+
+/// 删除播放列表。里面的条目一起没了，曲目本身不动。
+#[frb(sync)]
+pub fn delete_playlist(playlist_id: i64) -> Result<(), String> {
+    with_db(|db| db.delete_playlist(playlist_id).map_err(|e| e.to_string()))
+}
+
+/// 把一首歌追加到列表末尾。已经在列表里时返回 `false`（同一列表不重复）。
+#[frb(sync)]
+pub fn add_to_playlist(playlist_id: i64, track_id: i64) -> Result<bool, String> {
+    with_db(|db| db.add_to_playlist(playlist_id, track_id).map_err(|e| e.to_string()))
+}
+
+/// 从列表里移除一首歌，返回是否真的删掉了。
+///
+/// 收的是**曲目 id** 而不是下标：下标（position）会在曲目被重扫移除后留下空洞，
+/// 界面按行删的是“这一行那一首歌”。
+#[frb(sync)]
+pub fn remove_from_playlist(playlist_id: i64, track_id: i64) -> Result<bool, String> {
+    with_db(|db| {
+        db.remove_track_from_playlist(playlist_id, track_id)
+            .map_err(|e| e.to_string())
+    })
+}
+
+/// 列表里的曲目，按用户排的顺序返回。
+#[frb(sync)]
+pub fn playlist_tracks(playlist_id: i64) -> Result<Vec<Track>, String> {
+    with_db(|db| db.playlist_tracks(playlist_id).map_err(|e| e.to_string()))
+}
+
+// ---------------------------------------------------------------------------
 // 镜像声明：让 Dart 直接使用 core 里的类型，省掉一层手写 DTO。
 // 这里只提供类型信息；字段与 core 不一致会**编译报错**，因此不会悄悄跑偏。
 // ---------------------------------------------------------------------------
@@ -202,6 +257,15 @@ pub struct _Artist {
     pub name: String,
     pub track_count: u32,
     pub album_count: u32,
+}
+
+/// [`musicplayer_core::Playlist`] 的镜像。
+#[frb(mirror(Playlist))]
+pub struct _Playlist {
+    pub id: i64,
+    pub name: String,
+    pub track_count: u32,
+    pub created_at: i64,
 }
 
 /// [`musicplayer_core::Stats`] 的镜像。
@@ -327,6 +391,35 @@ mod tests {
         let again = scan_library(vec![root], ScanMode::Incremental).expect("增量再扫");
         assert_eq!(again.added, 0, "增量扫描不该重复入库：{again:?}");
         assert_eq!(again.skipped, 1, "未变化的文件应被跳过：{again:?}");
+
+        // 播放列表走一遍 FFI 表面：这一段是给 Dart 侧（抽屉 / 列表页）的契约。
+        let list = create_playlist(" 我的列表 ".to_string()).expect("新建列表");
+        let listed = playlists().expect("列出列表");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "我的列表");
+        assert_eq!(listed[0].track_count, 0);
+
+        let track_id = tracks[0].id;
+        assert!(add_to_playlist(list, track_id).expect("加歌"));
+        assert!(!add_to_playlist(list, track_id).expect("重复加歌"), "不该重复");
+        assert_eq!(playlists().expect("再列一次")[0].track_count, 1);
+
+        let in_list = playlist_tracks(list).expect("列表里的歌");
+        assert_eq!(in_list.len(), 1);
+        assert_eq!(in_list[0].id, track_id);
+
+        rename_playlist(list, " 通勤 ".to_string()).expect("改名");
+        assert_eq!(playlists().expect("改名后")[0].name, "通勤");
+
+        assert!(remove_from_playlist(list, track_id).expect("移出列表"));
+        assert!(!remove_from_playlist(list, track_id).expect("再移一次"), "应返回 false");
+        assert!(playlist_tracks(list).expect("清空后").is_empty());
+
+        // 删除列表后统计里的 playlist_count 要跟着降下来。
+        assert_eq!(library_stats().expect("统计").playlist_count, 1);
+        delete_playlist(list).expect("删除列表");
+        assert!(playlists().expect("删完").is_empty());
+        assert_eq!(library_stats().expect("统计").playlist_count, 0);
     }
 
     /// 建议根目录的契约：只给绝对路径，且一定真实存在。

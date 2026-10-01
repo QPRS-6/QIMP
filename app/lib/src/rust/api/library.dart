@@ -67,6 +67,43 @@ List<Artist> listArtists() => RustLib.instance.api.crateApiLibraryListArtists();
 /// 曲库统计（歌曲数 / 专辑数 / 总时长等）。
 Stats libraryStats() => RustLib.instance.api.crateApiLibraryLibraryStats();
 
+/// 所有播放列表（按名字排序）。
+List<Playlist> playlists() => RustLib.instance.api.crateApiLibraryPlaylists();
+
+/// 新建播放列表，返回它的 id。空名字由核心兜底成“新建列表”。
+int createPlaylist({required String name}) =>
+    RustLib.instance.api.crateApiLibraryCreatePlaylist(name: name);
+
+/// 改名。界面负责拦住空名字：核心只会 trim，不会拒绝空串。
+void renamePlaylist({required int playlistId, required String name}) => RustLib
+    .instance
+    .api
+    .crateApiLibraryRenamePlaylist(playlistId: playlistId, name: name);
+
+/// 删除播放列表。里面的条目一起没了，曲目本身不动。
+void deletePlaylist({required int playlistId}) =>
+    RustLib.instance.api.crateApiLibraryDeletePlaylist(playlistId: playlistId);
+
+/// 把一首歌追加到列表末尾。已经在列表里时返回 `false`（同一列表不重复）。
+bool addToPlaylist({required int playlistId, required int trackId}) => RustLib
+    .instance
+    .api
+    .crateApiLibraryAddToPlaylist(playlistId: playlistId, trackId: trackId);
+
+/// 从列表里移除一首歌，返回是否真的删掉了。
+///
+/// 收的是**曲目 id** 而不是下标：下标（position）会在曲目被重扫移除后留下空洞，
+/// 界面按行删的是“这一行那一首歌”。
+bool removeFromPlaylist({required int playlistId, required int trackId}) =>
+    RustLib.instance.api.crateApiLibraryRemoveFromPlaylist(
+      playlistId: playlistId,
+      trackId: trackId,
+    );
+
+/// 列表里的曲目，按用户排的顺序返回。
+List<Track> playlistTracks({required int playlistId}) =>
+    RustLib.instance.api.crateApiLibraryPlaylistTracks(playlistId: playlistId);
+
 /// [`musicplayer_core::Album`] 的镜像。
 class Album {
   final String name;
@@ -149,6 +186,35 @@ class CoverData {
           runtimeType == other.runtimeType &&
           mime == other.mime &&
           data == other.data;
+}
+
+/// [`musicplayer_core::Playlist`] 的镜像。
+class Playlist {
+  final int id;
+  final String name;
+  final int trackCount;
+  final int createdAt;
+
+  const Playlist({
+    required this.id,
+    required this.name,
+    required this.trackCount,
+    required this.createdAt,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ name.hashCode ^ trackCount.hashCode ^ createdAt.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Playlist &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          trackCount == other.trackCount &&
+          createdAt == other.createdAt;
 }
 
 /// [`musicplayer_core::ScanMode`] 的镜像。

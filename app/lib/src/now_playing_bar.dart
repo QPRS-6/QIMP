@@ -1,7 +1,7 @@
 // Flutter 的 material 也导出了一个 `RepeatMode`（重复动画用）。
 // 这里要用的是播放器的循环模式，所以把 Flutter 那个藏起来，避免歧义。
 import 'package:flutter/material.dart' hide RepeatMode;
-import 'package:musicplayer/src/library_page.dart' show formatDuration;
+import 'package:musicplayer/src/format.dart';
 import 'package:musicplayer/src/playback_buttons.dart';
 import 'package:musicplayer/src/rust/api/library.dart';
 import 'package:musicplayer/src/rust/api/player.dart';

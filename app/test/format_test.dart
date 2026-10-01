@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:musicplayer/src/library_page.dart';
+import 'package:musicplayer/src/format.dart';
 
 /// 这些是纯函数，边界（0 / 负数 / 跨进位）最容易写错，所以单独测。
 void main() {

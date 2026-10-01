@@ -517,6 +517,25 @@ impl Db {
         Ok(())
     }
 
+    /// 按**曲目 id** 从播放列表里移除，返回是否真的删掉了。
+    ///
+    /// 界面上点的是「某一行那一首歌」，而下标（position）会在曲目被重扫移除时留下空洞
+    /// （`playlist_item` 是 `ON DELETE CASCADE`），所以这里不收下标，收 id。
+    /// 删完顺手把 position 重新编号成连续的 `0..n-1`：这样「下标就是 position」
+    /// 这个前提在 [`Db::remove_from_playlist`] 那边也继续成立。
+    pub fn remove_track_from_playlist(&self, playlist: PlaylistId, track: TrackId) -> Result<bool> {
+        let tx = self.conn.unchecked_transaction()?;
+        let removed = tx.execute(
+            "DELETE FROM playlist_item WHERE playlist_id = ?1 AND track_id = ?2",
+            params![playlist, track],
+        )?;
+        if removed > 0 {
+            compact_playlist(&tx, playlist)?;
+        }
+        tx.commit()?;
+        Ok(removed > 0)
+    }
+
     pub fn playlist_tracks(&self, playlist: PlaylistId) -> Result<Vec<Track>> {
         let sql = format!(
             "SELECT {} FROM track t
@@ -533,6 +552,27 @@ impl Db {
         let rows = stmt.query_map(params![playlist], map_track)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
+}
+
+/// 把某个列表里的 position 重新编号成连续的 `0..n-1`（保持现有顺序）。
+///
+/// 只可能「变小」，而且是按升序逐行写入，所以中途不会撞上
+/// `playlist_item` 的 `PRIMARY KEY(playlist_id, position)`。
+fn compact_playlist(conn: &Connection, playlist: PlaylistId) -> Result<()> {
+    let rowids: Vec<i64> = {
+        let mut stmt = conn.prepare(
+            "SELECT rowid FROM playlist_item
+             WHERE playlist_id = ?1 ORDER BY position ASC, rowid ASC",
+        )?;
+        let rows = stmt.query_map(params![playlist], |row| row.get::<_, i64>(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut stmt = conn
+        .prepare("UPDATE playlist_item SET position = ?3 WHERE playlist_id = ?1 AND rowid = ?2")?;
+    for (index, rowid) in rowids.iter().enumerate() {
+        stmt.execute(params![playlist, rowid, index as i64])?;
+    }
+    Ok(())
 }
 
 impl Db {
@@ -830,5 +870,106 @@ mod tests {
         assert_eq!(db.search("radio", 10).unwrap().len(), 1);
         assert_eq!(db.search("kid a", 10).unwrap().len(), 1);
         assert_eq!(db.search("SONG", 10).unwrap().len(), 1);
+    }
+
+    /// 播放列表：新建 → 加歌（不重复）→ 改顺序后按下标删 → 按 id 删 → 级联删除。
+    #[test]
+    fn playlist_roundtrip() {
+        let db = memory_db();
+        let a = db.upsert_track(&sample("/m/a.mp3", "A", "X", "Al", 1000)).unwrap();
+        let b = db.upsert_track(&sample("/m/b.mp3", "B", "X", "Al", 2000)).unwrap();
+        let c = db.upsert_track(&sample("/m/c.mp3", "C", "X", "Al", 3000)).unwrap();
+
+        let list = db.create_playlist("  学习  ").unwrap();
+        assert_eq!(name_of(&db, list), "学习", "名字应被 trim");
+        assert!(db.create_playlist("   ").unwrap() > 0, "空名字要有兜底");
+
+        assert!(db.add_to_playlist(list, a).unwrap());
+        assert!(db.add_to_playlist(list, b).unwrap());
+        assert!(db.add_to_playlist(list, c).unwrap());
+        assert!(!db.add_to_playlist(list, a).unwrap(), "同一列表里不重复添加");
+        assert_eq!(count_of(&db, list), 3);
+
+        // 顺序就是加入顺序。
+        let titles: Vec<String> = db
+            .playlist_tracks(list)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        assert_eq!(titles, vec!["A", "B", "C"]);
+
+        // 按下标删中间那首：剩下的 position 必须补成 0/1。
+        db.remove_from_playlist(list, 1).unwrap();
+        let titles: Vec<String> = db
+            .playlist_tracks(list)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        assert_eq!(titles, vec!["A", "C"]);
+        assert_eq!(positions_of(&db, list), vec![0, 1]);
+
+        // 按 id 删：删掉的不在列表里时返回 false，也不该动别人的位置。
+        assert!(db.remove_track_from_playlist(list, a).unwrap());
+        assert!(!db.remove_track_from_playlist(list, a).unwrap());
+        let titles: Vec<String> = db
+            .playlist_tracks(list)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        assert_eq!(titles, vec!["C"]);
+        assert_eq!(positions_of(&db, list), vec![0]);
+
+        // 曲目被重扫移除（级联删除）会留空洞；再按 id 删一次要把它抹平。
+        db.add_to_playlist(list, b).unwrap();
+        db.add_to_playlist(list, a).unwrap();
+        db.delete_paths(&["/m/b.mp3".to_string()]).unwrap();
+        assert_eq!(positions_of(&db, list), vec![0, 2], "级联删除会留空洞");
+        assert!(db.remove_track_from_playlist(list, a).unwrap());
+        assert_eq!(positions_of(&db, list), vec![0], "删完应重新编号");
+
+        // 改名 / 删除列表；曲目本身不受影响。
+        db.rename_playlist(list, " 通勤 ").unwrap();
+        assert_eq!(name_of(&db, list), "通勤");
+        db.delete_playlist(list).unwrap();
+        assert_eq!(playlists_len(&db), 1, "只该删掉这一个");
+        assert_eq!(db.stats().unwrap().track_count, 2, "删列表不该删曲目");
+    }
+
+    /// 按 id 找名字。`playlists()` 是按名字排序的，用下标会随别的列表漂移。
+    fn name_of(db: &Db, playlist: PlaylistId) -> String {
+        db.playlists()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id == playlist)
+            .map(|p| p.name)
+            .expect("列表应存在")
+    }
+
+    fn count_of(db: &Db, playlist: PlaylistId) -> u32 {
+        db.playlists()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id == playlist)
+            .map(|p| p.track_count)
+            .expect("列表应存在")
+    }
+
+    fn playlists_len(db: &Db) -> usize {
+        db.playlists().unwrap().len()
+    }
+
+    /// 某个列表里所有条目的 position（按显示顺序）。
+    fn positions_of(db: &Db, playlist: PlaylistId) -> Vec<i64> {
+        let mut stmt = db
+            .conn
+            .prepare("SELECT position FROM playlist_item WHERE playlist_id = ?1 ORDER BY position")
+            .expect("prepare");
+        let rows = stmt
+            .query_map(params![playlist], |row| row.get::<_, i64>(0))
+            .expect("query");
+        rows.collect::<rusqlite::Result<Vec<_>>>().expect("collect")
     }
 }

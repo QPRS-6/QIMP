@@ -3,14 +3,23 @@ import 'dart:async';
 // Flutter 的 material 也导出了一个 `RepeatMode`（重复动画用）。
 // 这里要用的是播放器的循环模式，所以把 Flutter 那个藏起来，避免歧义。
 import 'package:flutter/material.dart' hide RepeatMode;
+import 'package:musicplayer/src/add_to_playlist.dart';
+import 'package:musicplayer/src/app_drawer.dart';
 import 'package:musicplayer/src/app_info.dart';
+import 'package:musicplayer/src/format.dart';
+import 'package:musicplayer/src/my_music.dart';
 import 'package:musicplayer/src/now_playing_bar.dart';
 import 'package:musicplayer/src/playback_service.dart';
+import 'package:musicplayer/src/playlist_api.dart';
+import 'package:musicplayer/src/playlist_page.dart';
 import 'package:musicplayer/src/player_page.dart';
+import 'package:musicplayer/src/queue_store.dart';
+import 'package:musicplayer/src/queue_view.dart';
 import 'package:musicplayer/src/rust/api/library.dart';
 import 'package:musicplayer/src/rust/api/player.dart';
 import 'package:musicplayer/src/sleep_timer.dart';
 import 'package:musicplayer/src/storage.dart';
+import 'package:musicplayer/src/track_tile.dart';
 import 'package:path_provider/path_provider.dart';
 
 /// 曲库页：授权 → 打开数据库 → 扫描 → 列表 / 搜索。
@@ -23,10 +32,17 @@ import 'package:path_provider/path_provider.dart';
 typedef AccessProbe = Future<bool> Function();
 
 class LibraryPage extends StatefulWidget {
-  const LibraryPage({super.key, this.accessProbe = StorageAccess.granted});
+  const LibraryPage({
+    super.key,
+    this.accessProbe = StorageAccess.granted,
+    this.playlistApi = const PlaylistApi(),
+  });
 
   /// 返回 `true` 表示已获得存储访问权。
   final AccessProbe accessProbe;
+
+  /// 播放列表的读写入口（抽屉 / 列表页用）；测试里换成内存桩。
+  final PlaylistApi playlistApi;
 
   @override
   State<LibraryPage> createState() => _LibraryPageState();
@@ -41,6 +57,19 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   List<Track> _tracks = const <Track>[];
   List<String> _roots = const <String>[];
   final TextEditingController _search = TextEditingController();
+
+  /// 抽屉里选中的主视图（主页 / 我的音乐 / 队列）。
+  HomeView _view = HomeView.library;
+
+  /// 当前打开的播放列表（抽屉高亮用；`null` = 不在任何列表里）。
+  int? _playlistId;
+
+  /// **不带搜索过滤**的整份曲目。「我的音乐」的分组浏览用它：
+  /// 搜索框里非空时 `_tracks` 只剩一半，分组会少一半的专辑。
+  List<Track>? _allTracks;
+
+  /// 当前播放队列（Dart 侧镜像）。队列视图读它，换队列的地方写它。
+  final PlayQueueStore _queue = PlayQueueStore();
 
   /// 播放状态快照。只让底部播放条监听它，避免每 500ms 重建整个曲目列表。
   final ValueNotifier<PlayerSnapshot?> _player = ValueNotifier<PlayerSnapshot?>(
@@ -77,6 +106,7 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
     _seekCatchUp?.cancel();
     _sleepTimer.dispose();
     _player.dispose();
+    _queue.dispose();
     _search.dispose();
     super.dispose();
   }
@@ -121,13 +151,38 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   }
 
   /// 读取列表。本地 SQLite 查几千首是毫秒级，所以直接用同步接口，省掉一屏 loading。
+  ///
+  /// 搜索框为空时顺手把「整份曲目」也存下来（我的音乐 / 队列要按 id 回查标题）。
   void _reload() {
     final query = _search.text.trim();
-    _tracks = query.isEmpty
-        ? listTracks(sort: SortKey.title, descending: false, limit: 2000)
-        : searchTracks(query: query, limit: 500);
+    if (query.isEmpty) {
+      final all = listTracks(
+        sort: SortKey.title,
+        descending: false,
+        limit: 2000,
+      );
+      _allTracks = all;
+      _tracks = all;
+    } else {
+      _tracks = searchTracks(query: query, limit: 500);
+    }
     _stats = libraryStats();
     setState(() {});
+  }
+
+  /// 单独把整份曲目读一遍（切到「我的音乐」时用：可能启动时搜索框里就有词）。
+  void _loadAllTracks() {
+    try {
+      final all = listTracks(
+        sort: SortKey.title,
+        descending: false,
+        limit: 2000,
+      );
+      _allTracks = all;
+      setState(() {});
+    } catch (e) {
+      _toast('读取曲库失败：$e');
+    }
   }
 
   Future<void> _scan({required bool full}) async {
@@ -137,6 +192,8 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
         roots: _roots,
         mode: full ? ScanMode.full : ScanMode.incremental,
       );
+      // 曲库变了，分组浏览那份缓存作废。
+      _allTracks = null;
       _reload();
       _toast(
         '扫描完成：新增 ${summary.added}，更新 ${summary.updated}，'
@@ -198,23 +255,69 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
   }
 
   /// 从当前列表的第 `index` 首开始播放（列表本身就是播放队列）。
-  void _playAt(int index) {
+  void _playAt(int index) => _playTracks(_tracks, index);
+
+  /// 播放一组曲目（从第 `index` 首开始）。
+  ///
+  /// 曲库页、专辑/艺术家页、播放列表页都走这里：换队列的地方只该有一处，
+  /// 队列镜像（抽屉里的「队列」视图）也只在这里更新。
+  void _playTracks(List<Track> tracks, int index) {
+    if (tracks.isEmpty) return;
     // 用户点了某一首：此时 App 一定在前台，正好可以拉起前台服务。
     PlaybackService.start();
     try {
-      setPlayQueue(
-        entries: [
-          for (final track in _tracks)
-            QueueEntry(id: track.id, path: track.path),
-        ],
-        startAt: index,
-        autoplay: true,
-      );
+      final entries = queueEntriesOf(tracks);
+      setPlayQueue(entries: entries, startAt: index, autoplay: true);
+      _queue.replace(entries);
     } catch (e) {
       _toast('无法播放：$e');
     }
     _refreshPlayer();
   }
+
+  /// 跳到队列里的某一首（队列本身不变，只换当前项）。
+  void _jumpTo(int index) {
+    final entries = _queue.entries.value;
+    if (index < 0 || index >= entries.length) return;
+    PlaybackService.start();
+    try {
+      setPlayQueue(entries: entries, startAt: index, autoplay: true);
+    } catch (e) {
+      _toast('无法播放：$e');
+    }
+    _refreshPlayer();
+  }
+
+  /// 切主视图（抽屉里点的那三个）。
+  void _selectView(HomeView view) {
+    setState(() => _view = view);
+    if (view == HomeView.myMusic && _allTracks == null) {
+      _loadAllTracks();
+    }
+  }
+
+  /// 打开一个播放列表：列表页有自己的返回箭头与编辑模式，所以走路由压栈。
+  void _openPlaylist(Playlist playlist) {
+    setState(() => _playlistId = playlist.id);
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) => PlaylistPage(
+              playlist: playlist,
+              player: _player,
+              queue: _queue,
+              api: widget.playlistApi,
+            ),
+          ),
+        )
+        .whenComplete(() {
+          if (mounted) setState(() => _playlistId = null);
+        });
+  }
+
+  /// 长按曲目：加入某个播放列表。
+  Future<void> _addToPlaylist(Track track) =>
+      showAddToPlaylist(context, track: track, api: widget.playlistApi);
 
   /// 跳转进度。播放线程消化口令是异步的，所以隔一小会儿再补一次快照，
   /// 让进度条尽快回到真实位置（进度条自己还有「追不上就解锁」的兜底）。
@@ -293,53 +396,35 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
       return _ErrorPage(message: _error!, onRetry: _bootstrap);
     }
     return Scaffold(
+      // 左侧抽屉：导航 + 播放列表管理。
+      // 顶栏的汉堡按钮由 AppBar 自动生成（有 drawer 时默认就是 DrawerButton）。
+      drawer: AppDrawer(
+        view: _view,
+        onSelectView: _selectView,
+        playlistId: _playlistId,
+        onSelectPlaylist: _openPlaylist,
+        api: widget.playlistApi,
+      ),
       appBar: AppBar(
-        title: const Text(kAppTitle),
-        actions: [
-          IconButton(
-            tooltip: '增量扫描（只解析变化的文件）',
-            onPressed: _busy ? null : () => _scan(full: false),
-            icon: const Icon(Icons.refresh),
-          ),
-          IconButton(
-            tooltip: '全量扫描（重新解析所有文件）',
-            onPressed: _busy ? null : () => _scan(full: true),
-            icon: const Icon(Icons.library_music),
-          ),
-        ],
+        title: _viewTitle(),
+        actions: _appBarActions(),
       ),
-      body: Column(
-        children: [
-          _StatsBar(stats: _stats, rootCount: _roots.length),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-            child: TextField(
-              controller: _search,
-              onChanged: (_) => _reload(),
-              decoration: const InputDecoration(
-                isDense: true,
-                prefixIcon: Icon(Icons.search),
-                hintText: '搜索标题 / 艺术家 / 专辑',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ),
-          Expanded(
-            child: ValueListenableBuilder<PlayerSnapshot?>(
-              valueListenable: _player,
-              builder: (context, snapshot, _) => _TrackList(
-                tracks: _tracks,
-                emptyHint: _emptyHint(),
-                playingId: snapshot?.trackId ?? 0,
-                // 正在播放的那首在列表里会被标出来
-                playingState: snapshot?.state,
-                onPlay: _playAt,
-              ),
-            ),
-          ),
-        ],
-      ),
-      // 底部播放条固定在屏幕下边缘，FAB 会让位（扫描入口已移到 AppBar）
+      body: switch (_view) {
+        HomeView.library => _buildLibraryBody(),
+        HomeView.myMusic => MyMusicView(
+          tracks: _allTracks ?? const <Track>[],
+          player: _player,
+          onPlay: _playTracks,
+          loading: _allTracks == null,
+        ),
+        HomeView.queue => QueueView(
+          queue: _queue.entries,
+          player: _player,
+          trackById: _trackById,
+          onJump: _jumpTo,
+        ),
+      },
+      // 底部播放条固定在屏幕下边缘，三个视图共用同一个（切视图不断音、状态不失同步）
       bottomNavigationBar: ValueListenableBuilder<PlayerSnapshot?>(
         valueListenable: _player,
         builder: (context, snapshot, _) => NowPlayingBar(
@@ -356,6 +441,73 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  /// 主页（曲库）的内容：统计 + 搜索 + 曲目列表。
+  Widget _buildLibraryBody() {
+    return Column(
+      children: [
+        _StatsBar(stats: _stats, rootCount: _roots.length),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+          child: TextField(
+            controller: _search,
+            onChanged: (_) => _reload(),
+            decoration: const InputDecoration(
+              isDense: true,
+              prefixIcon: Icon(Icons.search),
+              hintText: '搜索标题 / 艺术家 / 专辑',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ),
+        Expanded(
+          child: ValueListenableBuilder<PlayerSnapshot?>(
+            valueListenable: _player,
+            builder: (context, snapshot, _) => _TrackList(
+              tracks: _tracks,
+              emptyHint: _emptyHint(),
+              playingId: snapshot?.trackId ?? 0,
+              // 正在播放的那首在列表里会被标出来
+              playingState: snapshot?.state,
+              onPlay: _playAt,
+              // 长按 → 添加到播放列表
+              onLongPress: _addToPlaylist,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 主页不显示标题（图片里就是只有汉堡按钮）；
+  /// 另外两个视图用标题告诉用户「现在在哪」。
+  Widget? _viewTitle() {
+    switch (_view) {
+      case HomeView.library:
+        return null;
+      case HomeView.myMusic:
+        return const Text('我的音乐');
+      case HomeView.queue:
+        return const Text('队列');
+    }
+  }
+
+  /// 扫描入口只在曲库页有用；切到别的视图时藏起来，省得在专辑页误点全量扫描。
+  List<Widget> _appBarActions() {
+    if (_view != HomeView.library) return const <Widget>[];
+    return [
+      IconButton(
+        tooltip: '增量扫描（只解析变化的文件）',
+        onPressed: _busy ? null : () => _scan(full: false),
+        icon: const Icon(Icons.refresh),
+      ),
+      IconButton(
+        tooltip: '全量扫描（重新解析所有文件）',
+        onPressed: _busy ? null : () => _scan(full: true),
+        icon: const Icon(Icons.library_music),
+      ),
+    ];
   }
 
   String _emptyHint() => _roots.isEmpty
@@ -468,6 +620,7 @@ class _TrackList extends StatelessWidget {
     required this.playingId,
     required this.onPlay,
     this.playingState,
+    this.onLongPress,
   });
 
   final List<Track> tracks;
@@ -480,6 +633,9 @@ class _TrackList extends StatelessWidget {
   final PlayerState? playingState;
 
   final ValueChanged<int> onPlay;
+
+  /// 长按某一首（曲库页用来弹出「添加到播放列表」）。
+  final ValueChanged<Track>? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -496,100 +652,25 @@ class _TrackList extends StatelessWidget {
       itemBuilder: (context, index) {
         final track = tracks[index];
         final isPlaying = track.id == playingId;
-        return _TrackTile(
+        return TrackTile(
           track: track,
           playing: isPlaying,
           paused: isPlaying && playingState == PlayerState.paused,
           // 点哪首就从哪首开始播：整个列表就是播放队列
           onTap: () => onPlay(index),
+          onLongPress: onLongPress == null
+              ? null
+              : () => onLongPress!(track),
         );
       },
     );
   }
 }
 
-class _TrackTile extends StatelessWidget {
-  const _TrackTile({
-    required this.track,
-    required this.onTap,
-    this.playing = false,
-    this.paused = false,
-  });
+// 曲目行已抽到 `track_tile.dart`（`TrackTile`）：曲库页、播放列表页、队列页共用，
+// 长按「添加到播放列表」也由它透出 `onLongPress`。
 
-  final Track track;
-  final VoidCallback onTap;
-
-  /// 是否是当前播放项。
-  final bool playing;
-
-  /// 当前播放项是否处于暂停。
-  final bool paused;
-
-  @override
-  Widget build(BuildContext context) {
-    final subtitle = <String>[
-      if (track.artist?.isNotEmpty ?? false) track.artist!,
-      if (track.album?.isNotEmpty ?? false) track.album!,
-      if (track.hasCover) '含封面',
-    ].join(' · ');
-    final accent = Theme.of(context).colorScheme.primary;
-    return ListTile(
-      dense: true,
-      onTap: onTap,
-      selected: playing,
-      leading: Icon(
-        playing
-            ? (paused ? Icons.pause_circle_outline : Icons.equalizer)
-            : Icons.music_note,
-        color: playing ? accent : null,
-      ),
-      title: Text(
-        track.title.isEmpty ? track.path.split('/').last : track.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: playing ? TextStyle(color: accent) : null,
-      ),
-      subtitle: Text(
-        subtitle.isEmpty ? track.path : subtitle,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Text(formatDuration(track.durationMs)),
-    );
-  }
-}
 
 /// 毫秒 → `m:ss`。与核心的约定一致：`0` 表示时长未知，显示 `--:--`。
-String formatDuration(int ms) {
-  if (ms <= 0) return '--:--';
-  final totalSeconds = (ms / 1000).round();
-  final minutes = totalSeconds ~/ 60;
-  final seconds = totalSeconds % 60;
-  return '$minutes:${seconds.toString().padLeft(2, '0')}';
-}
+/// 已搬到 `format.dart`：底部播放条、播放界面、播放列表页都要用。
 
-/// 毫秒 → `h:mm:ss`。用于“总时长”这种必然超过一小时的数字。
-String formatDurationLong(int ms) {
-  if (ms <= 0) return '0:00';
-  final totalSeconds = (ms / 1000).round();
-  final hours = totalSeconds ~/ 3600;
-  final minutes = (totalSeconds % 3600) ~/ 60;
-  final seconds = totalSeconds % 60;
-  final mm = minutes.toString().padLeft(2, '0');
-  final ss = seconds.toString().padLeft(2, '0');
-  return hours > 0 ? '$hours:$mm:$ss' : '$minutes:$ss';
-}
-
-/// 字节 → 人类可读（保留一位小数）。
-String formatSize(int bytes) {
-  const units = <String>['B', 'KB', 'MB', 'GB', 'TB'];
-  var value = bytes.toDouble();
-  var unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return unit == 0
-      ? '${value.toInt()} ${units[unit]}'
-      : '${value.toStringAsFixed(1)} ${units[unit]}';
-}

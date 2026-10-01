@@ -5,7 +5,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' hide RepeatMode;
 
-import 'package:musicplayer/src/library_page.dart'
+import 'package:musicplayer/src/format.dart'
     show formatDuration, formatDurationLong;
 import 'package:musicplayer/src/playback_buttons.dart';
 import 'package:musicplayer/src/rust/api/library.dart';
