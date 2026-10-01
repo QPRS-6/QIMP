@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  小部件设置页。
+  - 预览：代码里把 widget_card 那份布局 inflate 进 preview_container，改什么立刻看得见。
+  - 颜色：预设色块 + R/G/B 三条滑块（滑块本身是代码生成的，见 WidgetSettingsActivity.ColorEditor），
+    所以这里只留容器：色块与滑块是「数据」，写进 XML 只会变成一堆重复的块。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/widget_settings_title"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/widget_settings_preview"
+            android:textStyle="bold" />
+
+        <FrameLayout
+            android:id="@+id/preview"
+            android:layout_width="match_parent"
+            android:layout_height="170dp"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/widget_preview_background"
+            android:clipToPadding="false" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/widget_settings_preview_note"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/widget_settings_cover"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/cover_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textSize="14sp" />
+
+        <SeekBar
+            android:id="@+id/cover_seek"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/widget_settings_button_color"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/button_colors"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal" />
+
+        <LinearLayout
+            android:id="@+id/button_color_editor"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/widget_settings_title_color"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/title_colors"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal" />
+
+        <LinearLayout
+            android:id="@+id/title_color_editor"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <Button
+            android:id="@+id/reset"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/widget_settings_reset" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/widget_settings_note"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>

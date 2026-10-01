@@ -7,9 +7,9 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `track_or_none`, `with_db`
+// These functions are ignored because they are not marked as `pub`: `default_playlist_name`, `engine_duration_ms`, `order_of`, `track_or_none`, `with_db`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `SortOrder`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
 
 /// 一首歌的封面：内嵌图优先，其次同目录的 `cover.jpg` / `folder.jpg` 等约定文件名
 /// （判断规则都在 core 的 `metadata::read_cover` 里）。
@@ -18,6 +18,16 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 /// 界面上退化成一张占位图就够了，不该因为一张图让播放界面报错。
 Future<CoverData?> trackCover({required int trackId}) =>
     RustLib.instance.api.crateApiLibraryTrackCover(trackId: trackId);
+
+/// 一首歌的歌词：**同目录同名的 `.lrc` 优先**，其次文件里内嵌的歌词
+/// （判断规则都在 core 的 `metadata::read_lyrics` 里）。
+///
+/// 两处都没有、id 不存在、曲库没打开——统统返回 `null`：界面上显示一句“没有歌词”
+/// 就够了，不该让播放界面出错。
+///
+/// 异步：要读磁盘上的 `.lrc` 或整份标签，别卡住 UI 线程（与 [`track_cover`] 一致）。
+Future<Lyrics?> trackLyrics({required int trackId}) =>
+    RustLib.instance.api.crateApiLibraryTrackLyrics(trackId: trackId);
 
 /// Android 上常见的音乐目录，**只返回真实存在的那些**，UI 可直接拿来当扫描根。
 ///
@@ -41,7 +51,9 @@ Future<ScanSummary> scanLibrary({
   required ScanMode mode,
 }) => RustLib.instance.api.crateApiLibraryScanLibrary(roots: roots, mode: mode);
 
-/// 列出曲库里的歌曲。`limit = None` 表示不限条数。
+/// 索引里的**全部**歌曲（含尚未收进曲库的）。`limit = None` 表示不限条数。
+///
+/// 界面平时要的是 [`list_library_tracks`]；这个留给“索引里到底有什么”的场合。
 List<Track> listTracks({
   required SortKey sort,
   required bool descending,
@@ -52,7 +64,49 @@ List<Track> listTracks({
   limit: limit,
 );
 
+/// **曲库**里的歌曲（主页与「我的音乐」看的就是这一份）。`limit = None` 表示不限条数。
+List<Track> listLibraryTracks({
+  required SortKey sort,
+  required bool descending,
+  int? limit,
+}) => RustLib.instance.api.crateApiLibraryListLibraryTracks(
+  sort: sort,
+  descending: descending,
+  limit: limit,
+);
+
+/// 建了索引、但不在曲库里的歌：扫描发现的新文件，以及被用户移出去的。
+///
+/// 主页上「＋ 添加歌曲」列的就是这一份（没有它，用户就没有地方把歌加回来）。
+List<Track> listPendingTracks({int? limit}) =>
+    RustLib.instance.api.crateApiLibraryListPendingTracks(limit: limit);
+
+/// 把歌曲收进曲库，返回真正加进去的条数。
+///
+/// 「添加歌曲」一次可能选几十首，所以接口收一批 id，而不是让界面一首一首调。
+int addToLibrary({required List<int> trackIds}) =>
+    RustLib.instance.api.crateApiLibraryAddToLibrary(trackIds: trackIds);
+
+/// 把歌曲移出曲库，返回真正移出的条数。
+///
+/// **只清标记**：索引记录与磁盘上的文件都留着，所以还能在「＋ 添加歌曲」里原样找回来。
+/// 要把文件也删掉是 [`delete_from_storage`] 的事。
+int removeFromLibrary({required List<int> trackIds}) =>
+    RustLib.instance.api.crateApiLibraryRemoveFromLibrary(trackIds: trackIds);
+
+/// 把歌曲**从储存里删掉**（文件 + 索引记录），返回删掉的文件数。
+///
+/// 这是整个应用里唯一会动用户文件的操作，界面必须先问清楚；收的是一批 id。
+/// 单个文件删不掉（权限、被别处占用）不打断整批：记进 `failed` 交给界面显示。
+/// 索引记录只在磁盘上确实没有这个文件时才删——留着一条指向“不存在的文件”的记录，
+/// 只会让界面显示一堆播不了的行。
+Future<DeleteSummary> deleteFromStorage({required List<int> trackIds}) =>
+    RustLib.instance.api.crateApiLibraryDeleteFromStorage(trackIds: trackIds);
+
 /// 模糊搜索标题 / 艺术家 / 专辑。
+///
+/// 搜的是**曲库**：界面上的搜索框过滤的正是下面那份曲库列表，搜出没入库的歌
+/// 只会让人以为它已经在曲库里了。
 List<Track> searchTracks({required String query, required int limit}) => RustLib
     .instance
     .api
@@ -65,6 +119,8 @@ List<Album> listAlbums() => RustLib.instance.api.crateApiLibraryListAlbums();
 List<Artist> listArtists() => RustLib.instance.api.crateApiLibraryListArtists();
 
 /// 曲库统计（歌曲数 / 专辑数 / 总时长等）。
+///
+/// 只算**曲库**里的歌——它喂给主页底部那行数字，用户看的就是自己挑进来的那些。
 Stats libraryStats() => RustLib.instance.api.crateApiLibraryLibraryStats();
 
 /// 所有播放列表（按名字排序）。
@@ -103,6 +159,68 @@ bool removeFromPlaylist({required int playlistId, required int trackId}) =>
 /// 列表里的曲目，按用户排的顺序返回。
 List<Track> playlistTracks({required int playlistId}) =>
     RustLib.instance.api.crateApiLibraryPlaylistTracks(playlistId: playlistId);
+
+/// 导入一份播放列表**文件**（m3u / m3u8 / xspf），返回新建列表的 id 与统计。
+///
+/// 收的是文件内容而不是路径：Android 上用户是用系统文件选择器挑的，拿到的只有
+/// `content://`，Dart 侧把它读成字节再传进来（见 Dart 的 `PlaylistFiles`）。
+/// 列表文件通常只有几十 KB，走一次消息通道不算什么；解析放在 core 里，
+/// 于是各种脏数据都能在宿主机上测（见 `musicplayer_core::playlist_file`）。
+///
+/// 异步：解析 + 建列表可能有几百条，不占着 UI 线程。
+///
+/// **对不上曲库的条目只是被跳过并计数**（`missing` / `missing_paths`），
+/// 不替用户建索引记录——没扫到过是「扫描」该处理的事。
+Future<PlaylistImport> importPlaylist({
+  required String fileName,
+  required List<int> bytes,
+}) => RustLib.instance.api.crateApiLibraryImportPlaylist(
+  fileName: fileName,
+  bytes: bytes,
+);
+
+/// 把播放列表导出成**文本**（m3u8 / xspf），由 Dart 侧落盘。
+///
+/// 为什么不在这里直接写文件：Android 上「保存到哪里」是用户用系统对话框选的，
+/// 落盘只能是拿着 `content://` 的那一侧（Kotlin）去写。这里只负责生成内容，
+/// 于是格式相关的逻辑全都能在宿主机上测。
+String exportPlaylist({
+  required int playlistId,
+  required PlaylistFileFormat format,
+}) => RustLib.instance.api.crateApiLibraryExportPlaylist(
+  playlistId: playlistId,
+  format: format,
+);
+
+/// 上次听到哪儿了（曲目 + 位置）；从没放过东西时为 `null`。
+ResumePoint? resumePoint() => RustLib.instance.api.crateApiLibraryResumePoint();
+
+/// 上次的播放队列（整队接着放）；从没记过队列时为 `null`。
+///
+/// 与 [`resume_point`] 的分工：那个回答「上次听的是哪一首、听到哪」，
+/// 这个回答「当时听的是哪一整队」。启动时用这一份还原播放队列——
+/// 只有单曲的话，重启之后「下一曲」就是个死键（真机上就是这么被发现的）。
+ResumeQueue? resumeQueue() => RustLib.instance.api.crateApiLibraryResumeQueue();
+
+/// 记下整份播放队列与当前项。队列换了、或者当前项换了就该调它。
+///
+/// 收的是**整份 id 列表**而不是增量：队列通常几十上百项，一次写清楚更省心，
+/// 也不会出现「本地那份和库里那份对不上」的中间状态。
+void savePlayQueue({required List<int> trackIds, required int index}) => RustLib
+    .instance
+    .api
+    .crateApiLibrarySavePlayQueue(trackIds: trackIds, index: index);
+
+/// 记下当前这首的播放进度，下次启动就能从这里接着放。
+///
+/// 顺手补一次时长：曲库里那份还是 0（标签里没写）时，用解码器从容器里算出来的值填上。
+/// 不补的话这类文件在列表里永远是 `--:--`（真机上遇到过：从 mp4 里扒出来、
+/// 名字叫 `.mp3` 的音频，标签能读出标题却读不出时长）。
+void savePlaybackPosition({required int trackId, required int positionMs}) =>
+    RustLib.instance.api.crateApiLibrarySavePlaybackPosition(
+      trackId: trackId,
+      positionMs: positionMs,
+    );
 
 /// [`musicplayer_core::Album`] 的镜像。
 class Album {
@@ -188,6 +306,87 @@ class CoverData {
           data == other.data;
 }
 
+/// 「从储存中删除」的结果：删掉了几个文件，以及删不掉的（附原因）。
+class DeleteSummary {
+  final int deleted;
+  final List<String> failed;
+
+  const DeleteSummary({required this.deleted, required this.failed});
+
+  @override
+  int get hashCode => deleted.hashCode ^ failed.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DeleteSummary &&
+          runtimeType == other.runtimeType &&
+          deleted == other.deleted &&
+          failed == other.failed;
+}
+
+/// [`musicplayer_core::lyric::LyricLine`] 的镜像：一行歌词。
+class LyricLine {
+  /// 起始时间（毫秒）；不同步的歌词里统一是 0。
+  final int timeMs;
+  final String text;
+
+  const LyricLine({required this.timeMs, required this.text});
+
+  @override
+  int get hashCode => timeMs.hashCode ^ text.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LyricLine &&
+          runtimeType == other.runtimeType &&
+          timeMs == other.timeMs &&
+          text == other.text;
+}
+
+/// [`musicplayer_core::lyric::Lyrics`] 的镜像。
+class Lyrics {
+  final List<LyricLine> lines;
+  final String? title;
+  final String? artist;
+  final String? album;
+  final int offsetMs;
+
+  /// 有没有可用的时间轴；`false` 表示纯文本歌词（界面上不做高亮与自动滚动）。
+  final bool synced;
+
+  const Lyrics({
+    required this.lines,
+    this.title,
+    this.artist,
+    this.album,
+    required this.offsetMs,
+    required this.synced,
+  });
+
+  @override
+  int get hashCode =>
+      lines.hashCode ^
+      title.hashCode ^
+      artist.hashCode ^
+      album.hashCode ^
+      offsetMs.hashCode ^
+      synced.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Lyrics &&
+          runtimeType == other.runtimeType &&
+          lines == other.lines &&
+          title == other.title &&
+          artist == other.artist &&
+          album == other.album &&
+          offsetMs == other.offsetMs &&
+          synced == other.synced;
+}
+
 /// [`musicplayer_core::Playlist`] 的镜像。
 class Playlist {
   final int id;
@@ -215,6 +414,117 @@ class Playlist {
           name == other.name &&
           trackCount == other.trackCount &&
           createdAt == other.createdAt;
+}
+
+/// [`musicplayer_core::PlaylistFileFormat`] 的镜像：导入 / 导出认的两种文件格式。
+enum PlaylistFileFormat { m3U, xspf }
+
+/// [`musicplayer_core::PlaylistImport`] 的镜像：导入一份列表文件的结果。
+///
+/// Dart 侧拿它拼那句提示（「已导入 N 首」/「有 M 条对不上」），
+/// 所以对不上的前几条（`missing_paths`）也带过来，用户可以自己看一眼是哪些。
+class PlaylistImport {
+  final int playlistId;
+  final int added;
+  final int missing;
+  final List<String> missingPaths;
+  final int skipped;
+
+  const PlaylistImport({
+    required this.playlistId,
+    required this.added,
+    required this.missing,
+    required this.missingPaths,
+    required this.skipped,
+  });
+
+  @override
+  int get hashCode =>
+      playlistId.hashCode ^
+      added.hashCode ^
+      missing.hashCode ^
+      missingPaths.hashCode ^
+      skipped.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PlaylistImport &&
+          runtimeType == other.runtimeType &&
+          playlistId == other.playlistId &&
+          added == other.added &&
+          missing == other.missing &&
+          missingPaths == other.missingPaths &&
+          skipped == other.skipped;
+}
+
+/// [`musicplayer_core::QueueTrack`] 的镜像：队列里的一项。
+///
+/// 与播放引擎那份 `QueueEntry`（`api::player`）字段一致，但两边各自独立：
+/// 那一份是「要送去播放的」，这一份是「上次存下来的」。
+class QueueTrack {
+  final int id;
+  final String path;
+
+  const QueueTrack({required this.id, required this.path});
+
+  @override
+  int get hashCode => id.hashCode ^ path.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is QueueTrack &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          path == other.path;
+}
+
+/// [`musicplayer_core::ResumePoint`] 的镜像。
+///
+/// `track` 直接复用上面那个 [`musicplayer_core::Track`] 镜像，
+/// 所以 Dart 侧拿到的是同一个 `Track` 类型（界面不用做任何转换）。
+class ResumePoint {
+  final Track track;
+  final int positionMs;
+
+  const ResumePoint({required this.track, required this.positionMs});
+
+  @override
+  int get hashCode => track.hashCode ^ positionMs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ResumePoint &&
+          runtimeType == other.runtimeType &&
+          track == other.track &&
+          positionMs == other.positionMs;
+}
+
+/// [`musicplayer_core::ResumeQueue`] 的镜像：上次的整份播放队列。
+class ResumeQueue {
+  final List<QueueTrack> entries;
+  final int index;
+  final int positionMs;
+
+  const ResumeQueue({
+    required this.entries,
+    required this.index,
+    required this.positionMs,
+  });
+
+  @override
+  int get hashCode => entries.hashCode ^ index.hashCode ^ positionMs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ResumeQueue &&
+          runtimeType == other.runtimeType &&
+          entries == other.entries &&
+          index == other.index &&
+          positionMs == other.positionMs;
 }
 
 /// [`musicplayer_core::ScanMode`] 的镜像。

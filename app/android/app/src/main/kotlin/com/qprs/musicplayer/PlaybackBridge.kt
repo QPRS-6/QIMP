@@ -23,6 +23,11 @@ internal object PlaybackBridge {
     const val STATE_PAUSED = 2
     const val STATE_FAILED = 3
 
+    /** 与 Rust 侧 `playback_bridge::REPEAT_*` 常量一一对应。 */
+    const val REPEAT_OFF = 0
+    const val REPEAT_ALL = 1
+    const val REPEAT_ONE = 2
+
     /** 引擎是否已经打开。App 还没走到 `open_player` 时，通知栏不该出现。 */
     external fun engineReady(): Boolean
 
@@ -40,6 +45,15 @@ internal object PlaybackBridge {
 
     external fun trackDurationMs(): Long
 
+    /**
+     * 当前曲目的封面字节（内嵌图优先，其次同目录的 `cover.jpg` / `folder.jpg`）；
+     * 没有封面时是空数组，构造失败时是 null。
+     *
+     * 给的是**字节**而不是 Bitmap：解码与缩放要用 `BitmapFactory`，
+     * 那是这边的事（见 `Artwork.kt`）；Rust 只负责把文件里的原图交出来。
+     */
+    external fun coverBytes(): ByteArray?
+
     /** 播放失败的原因（给通知栏显示），没有则为 null。 */
     external fun errorText(): String?
 
@@ -56,4 +70,16 @@ internal object PlaybackBridge {
     external fun stop(): Boolean
 
     external fun seekTo(positionMs: Long): Boolean
+
+    /** 随机播放开着没有（桌面小部件的图标状态）。 */
+    external fun shuffleOn(): Boolean
+
+    /** 当前循环模式的编码，见 [REPEAT_OFF] / [REPEAT_ALL] / [REPEAT_ONE]。 */
+    external fun repeatCode(): Int
+
+    /** 切换随机播放，返回切换**后**的状态。 */
+    external fun toggleShuffle(): Boolean
+
+    /** 循环模式转一圈（关 → 全部 → 单曲 → 关），返回切换**后**的编码。 */
+    external fun cycleRepeat(): Int
 }

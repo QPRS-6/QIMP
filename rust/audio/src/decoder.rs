@@ -13,7 +13,7 @@ use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Time, TimeBase};
@@ -44,6 +44,29 @@ fn codec_registry() -> &'static CodecRegistry {
 pub struct DecoderInfo {
     pub sample_rate: u32,
     pub channels: u16,
+    /// 容器声明的总时长（毫秒）；`0` 表示容器没写。
+    ///
+    /// 为什么解码器也要给出这个值：曲库里那份时长来自标签解析（lofty），
+    /// 而**有些文件标签里没有时长却照样能播**——真机上遇到过一个
+    /// 「从 mp4 里扒出来、文件名叫 `.mp3`」的音频，标签能读出标题与艺术家，
+    /// 时长却是 0，于是列表显示 `--:--`、进度条也没法用（甚至整屏报错）。
+    /// 解码器这边是从容器里算出来的，正好补上这个洞。
+    pub duration_ms: u64,
+}
+
+/// 容器声明的时长（毫秒）；`0` 表示容器没写或换算不出来。
+///
+/// 必须走 `TimeBase::calc_duration`：`duration` 的单位是「时间基的刻度」，
+/// 只有配着 `time_base` 才能变成时间（例如 mp4 里音频轨的刻度是 1/44100 秒，
+/// 直接当毫秒用会差三个数量级）。
+fn track_duration_ms(track: &Track) -> u64 {
+    let (Some(time_base), Some(duration)) = (track.time_base, track.duration) else {
+        return 0;
+    };
+    time_base
+        .calc_duration(duration)
+        .map(|time| time.as_millis().clamp(0, i128::from(i64::MAX)) as u64)
+        .unwrap_or(0)
 }
 /// 把 symphonia 的错误压成播放层自己的错误类型。
 fn map_error(err: SymphoniaError) -> AudioError {
@@ -124,6 +147,7 @@ impl AudioDecoder {
                     .as_ref()
                     .map(|channels| channels.count() as u16)
                     .unwrap_or(0),
+                duration_ms: track_duration_ms(track),
             };
             (track.id, track.time_base, decoder, info)
         };
@@ -227,6 +251,9 @@ impl AudioDecoder {
                     self.info = DecoderInfo {
                         sample_rate: spec.rate(),
                         channels: spec.channels().count() as u16,
+                        // 时长来自容器，解码过程中不会变，必须原样带过去
+                        // ——否则解出第一包就把容器给的时长抹成 0 了。
+                        duration_ms: self.info.duration_ms,
                     };
                     self.scratch.resize(buffer.samples_interleaved(), f32::MID);
                     buffer.copy_to_slice_interleaved(&mut self.scratch);
@@ -272,6 +299,48 @@ mod tests {
             "位置应接近 1000ms，实际 {}",
             decoder.position_ms()
         );
+    }
+
+    /// 时长直接来自容器：UI 在曲库那份缺了的时候要靠它把进度条画对。
+    #[test]
+    fn reports_container_duration() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let path = temp.path().join("two-seconds.wav");
+        write_wav(&path, 2);
+
+        let decoder = AudioDecoder::open(&path).expect("打开 WAV");
+        let duration = decoder.info().duration_ms;
+        assert!(
+            (1990..=2010).contains(&duration),
+            "应报出容器里的 2 秒，实际 {duration}ms"
+        );
+
+        // 解出第一包会刷新采样率/声道数，但**不能**把时长抹掉。
+        let mut decoder = decoder;
+        decoder.next_chunk().expect("解码");
+        assert_eq!(
+            decoder.info().duration_ms,
+            duration,
+            "解码过程中时长不该被改写"
+        );
+    }
+
+    /// 容器没写时长（或没给时间基、换算不出来）时给 0，而不是瞎猜一个。
+    #[test]
+    fn unreported_duration_is_zero() {
+        use symphonia::core::units::Duration;
+
+        // 容器什么都没写。
+        assert_eq!(track_duration_ms(&Track::new(1)), 0);
+
+        // 有时长刻度、却没有时间基：换算不出来，也只能是 0。
+        let mut track = Track::new(1);
+        track.duration = Some(Duration::new(44_100));
+        assert_eq!(track_duration_ms(&track), 0);
+
+        // 两者俱全：44100 刻度 × 1/1000 秒 = 44.1 秒。
+        track.time_base = TimeBase::try_new(1, 1000);
+        assert_eq!(track_duration_ms(&track), 44_100);
     }
 
     /// 跳转：请求 500ms，实际落点也应接近 500ms，且之后还能继续解码。

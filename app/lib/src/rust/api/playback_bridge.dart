@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `current_track`, `run`
+// These functions are ignored because they are not marked as `pub`: `current_track`, `run`, `track_by_id`
 
 /// 引擎当前状态；引擎没起来时按“已停止”处理（通知栏据此收掉自己）。
 Future<int> stateCode() =>
@@ -29,6 +29,9 @@ Future<String> trackArtist() =>
     RustLib.instance.api.crateApiPlaybackBridgeTrackArtist();
 
 /// 当前曲目时长（毫秒）；查不到返回 0（通知栏据此不显示进度）。
+///
+/// 曲库里那份（标签解析来的）优先；它是 0 时退回解码器从容器里算出来的那份
+/// ——有些文件标签里读不出时长却照样能播，那种情况下通知栏本来会一直没有进度条。
 Future<int> trackDurationMs() =>
     RustLib.instance.api.crateApiPlaybackBridgeTrackDurationMs();
 

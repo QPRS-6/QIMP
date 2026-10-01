@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -14,9 +15,11 @@ import android.os.Looper
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import androidx.media.session.MediaButtonReceiver
+import java.util.concurrent.Executors
 
 /**
  * 播放的前台服务：把「正在播放」提升成前台服务，并提供锁屏 / 通知栏 / 耳机按键控制。
@@ -52,8 +55,24 @@ class PlaybackService : Service() {
     private var durationMs = 0L
     private var errorText = ""
 
+    /** 当前曲目的封面；取图是异步的，所以可能晚几毫秒才到（见 [loadArtwork]）。 */
+    private var artwork: Bitmap? = null
+
+    /**
+     * 取封面的后台线程：读文件 + 解码 + 缩放要几毫秒到几十毫秒，
+     * 放在主线程上会卡住 500ms 一次的轮询（也就卡住通知的更新）。
+     */
+    private val artworkExecutor = Executors.newSingleThreadExecutor()
+
     /** 上一次画出的「状态 + 曲目」：用来判断要不要重发通知。 */
     private var lastSignature = ""
+
+    /**
+     * 上一次同步给小部件的状态。
+     *
+     * 比通知那份签名多带随机 / 循环：通知栏不显示这两个开关，小部件显示。
+     */
+    private var lastWidgetSignature = ""
 
     /**
      * 音量归零 / 蓝牙断开 → 自动暂停。盯着系统事件，只在真在播时才动手，
@@ -127,6 +146,9 @@ class PlaybackService : Service() {
             ACTION_TOGGLE -> PlaybackBridge.toggle()
             ACTION_NEXT -> PlaybackBridge.next()
             ACTION_PREVIOUS -> PlaybackBridge.previous()
+            // 桌面小部件上多出来的两个开关（通知栏上没有它们）。
+            ACTION_TOGGLE_SHUFFLE -> PlaybackBridge.toggleShuffle()
+            ACTION_CYCLE_REPEAT -> PlaybackBridge.cycleRepeat()
             ACTION_STOP -> {
                 PlaybackBridge.stop()
                 stopSelf()
@@ -157,6 +179,9 @@ class PlaybackService : Service() {
         autoStop.stop()
         session.isActive = false
         session.release()
+        // 取封面的线程也收掉：它手里可能还攥着一张刚解出来的图。
+        artworkExecutor.shutdownNow()
+        artwork = null
         super.onDestroy()
     }
 
@@ -179,6 +204,9 @@ class PlaybackService : Service() {
             title = PlaybackBridge.trackTitle().orEmpty()
             artist = PlaybackBridge.trackArtist().orEmpty()
             durationMs = PlaybackBridge.trackDurationMs().coerceAtLeast(0L)
+            // 封面先清空再去取：上一首的图绝不能留在这一首的通知上。
+            artwork = null
+            loadArtwork(trackId)
         }
         errorText = if (state == PlaybackBridge.STATE_FAILED) {
             PlaybackBridge.errorText().orEmpty()
@@ -190,10 +218,20 @@ class PlaybackService : Service() {
         // speed 传 1：让系统自己把进度条往前推，不然得靠我们每 500ms 重发一次通知。
         session.setPlaybackState(playbackState(state, positionMs))
 
-        val signature = "$state|$trackId|$errorText"
+        // 封面也算进签名：图是异步到的，到货之后要再发一次通知才上得去。
+        val signature = "$state|$trackId|$errorText|${artwork != null}"
         if (signature != lastSignature) {
             lastSignature = signature
             notify(notification(state))
+        }
+
+        // 小部件那边多两个开关要显示，所以单独算一份签名：状态 / 曲目 / 随机 / 循环
+        // 任一变一次就重画一遍桌面上所有小部件。
+        val widgetSignature =
+            "$signature|${PlaybackBridge.shuffleOn()}|${PlaybackBridge.repeatCode()}"
+        if (widgetSignature != lastWidgetSignature) {
+            lastWidgetSignature = widgetSignature
+            updatePlaybackWidgets(this)
         }
 
         // 播完了 / 播挂了就收掉服务：通知不该在什么都没播的时候赖着不走。
@@ -214,7 +252,34 @@ class PlaybackService : Service() {
         .putString(MediaMetadataCompat.METADATA_KEY_TITLE, displayTitle())
         .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
         .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
+        .apply {
+            // 两个键都放：ART 是「这一首的封面」（通知栏 / 锁屏 / 媒体控制区读它），
+            // ALBUM_ART 给按专辑取图的地方（有些车机只认这个）。
+            artwork?.let {
+                putBitmap(MediaMetadataCompat.METADATA_KEY_ART, it)
+                putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it)
+            }
+        }
         .build()
+
+    /**
+     * 异步取当前曲目的封面。
+     *
+     * 取回来时可能已经换歌了（[cachedTrackId] 又变了），那一份直接丢掉——
+     * 否则会出现「放着 B，通知上是 A 的封面」。
+     * 拿到图之后重跑一次 [refresh]：签名里带了「有没有封面」，于是会重发一次通知，
+     * 图就是这么上到通知栏 / 锁屏上的。
+     */
+    private fun loadArtwork(trackId: Long) {
+        artworkExecutor.execute {
+            val bitmap = runCatching { decodeArtwork(PlaybackBridge.coverBytes()) }.getOrNull()
+            handler.post {
+                if (!polling || trackId != cachedTrackId) return@post
+                artwork = bitmap
+                runCatching { refresh() }
+            }
+        }
+    }
 
     private fun playbackState(state: Int, positionMs: Long): PlaybackStateCompat {
         val actions = PlaybackStateCompat.ACTION_PLAY or
@@ -236,9 +301,11 @@ class PlaybackService : Service() {
             .build()
     }
 
+    /// 没有曲目时的兜底标题：应用名本身，不再另抄一份字符串
+    /// （名字只在 `strings.xml` 的 `app_name` 与 Dart 的 `kAppTitle` 各写一遍）。
     private fun displayTitle(): String = when {
         title.isNotEmpty() -> title
-        cachedTrackId <= 0 -> "本地音乐播放器"
+        cachedTrackId <= 0 -> getString(R.string.app_name)
         else -> "未知曲目"
     }
 
@@ -263,6 +330,10 @@ class PlaybackService : Service() {
             .setContentTitle(displayTitle())
             .setContentText(text)
             .setContentIntent(contentIntent())
+            // 封面：通知栏上就是这张大图（展开后的媒体样式、锁屏、Android 13+ 的媒体卡片
+            // 读的都是 MediaSession 里的 ART，两边都得给）。没有封面时传 null，
+            // 通知照常显示，只是没有图。
+            .setLargeIcon(artwork)
             // 划掉通知 = 停止播放，比留一个没有意义的空通知好。
             .setDeleteIntent(actionIntent(ACTION_STOP, REQUEST_STOP))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -304,14 +375,22 @@ class PlaybackService : Service() {
 
     private fun promoteToForeground() {
         val notification = notification(PlaybackBridge.stateCode())
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        // 桌面小部件上点一下也会走到这里，而那一刻 App 可能正处在后台：
+        // Android 12+ 会因此抛 ForegroundServiceStartNotAllowedException。
+        // 播放本身在进程里照常继续，所以这里只记一笔，不让它把服务带崩
+        // （通知栏那几条路径都是从可见界面点出来的，不会碰到这个限制）。
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        }.onFailure { error ->
+            Log.w(TAG, "前台服务没提起来（多半是从后台被小部件叫醒的）：$error")
         }
     }
 
@@ -350,15 +429,27 @@ class PlaybackService : Service() {
         /** Dart 侧启动服务用（保持前台 + 显示通知）。 */
         const val ACTION_START = "com.qprs.musicplayer.action.START"
 
+        /*
+         * 通知栏按钮与桌面小部件**共用**这组动作：两边都发到这个服务，
+         * 「按一下的效果」就只有一份实现（落到 Rust 引擎上）。
+         */
+
+        const val ACTION_TOGGLE = "com.qprs.musicplayer.action.TOGGLE"
+        const val ACTION_NEXT = "com.qprs.musicplayer.action.NEXT"
+        const val ACTION_PREVIOUS = "com.qprs.musicplayer.action.PREVIOUS"
+
+        /** 只在小部件上用到的两个开关。 */
+        const val ACTION_TOGGLE_SHUFFLE = "com.qprs.musicplayer.action.TOGGLE_SHUFFLE"
+        const val ACTION_CYCLE_REPEAT = "com.qprs.musicplayer.action.CYCLE_REPEAT"
+
         private const val ACTION_PLAY = "com.qprs.musicplayer.action.PLAY"
         private const val ACTION_PAUSE = "com.qprs.musicplayer.action.PAUSE"
-        private const val ACTION_TOGGLE = "com.qprs.musicplayer.action.TOGGLE"
-        private const val ACTION_NEXT = "com.qprs.musicplayer.action.NEXT"
-        private const val ACTION_PREVIOUS = "com.qprs.musicplayer.action.PREVIOUS"
         private const val ACTION_STOP = "com.qprs.musicplayer.action.STOP"
 
         private const val CHANNEL_ID = "playback"
         private const val NOTIFICATION_ID = 1001
+
+        private const val TAG = "PlaybackService"
 
         private const val REQUEST_CONTENT = 10
         private const val REQUEST_PREVIOUS = 11

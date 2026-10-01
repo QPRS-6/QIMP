@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  2×1：一行——封面 · 歌名 · 上一曲 / 播放 / 下一曲。
+
+  尺寸按官方那套公式写：`min{Width,Height} = 70 × 格数 − 30`，
+  1 格 = 40dp、2 格 = 110dp（`target*` 那两个是 Android 12+ 用来对齐格子的）。
+  `updatePeriodMillis = 0`：不靠系统定时刷新（最快也只有 30 分钟，太慢），
+  状态一变由播放服务主动推。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_2x1_description"
+    android:initialLayout="@layout/widget_row"
+    android:minHeight="40dp"
+    android:minWidth="110dp"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="1"
+    android:targetCellWidth="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

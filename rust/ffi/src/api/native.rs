@@ -20,7 +20,7 @@
 //! }
 //! ```
 
-use jni::objects::{JObject, JString};
+use jni::objects::{JByteArray, JObject, JString};
 use jni::sys::{jboolean, jint, jlong, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 
@@ -98,6 +98,20 @@ pub extern "system" fn Java_com_qprs_musicplayer_PlaybackBridge_errorText<'local
     env.new_string(bridge::error_text()).unwrap_or_default()
 }
 
+/// 当前曲目的封面字节（没有封面时是空数组，构造失败时是 null）。
+///
+/// 图片给的是**字节**而不是 Bitmap：解码 / 缩放要用 `BitmapFactory`，
+/// 那是 Kotlin 侧的事；Rust 只管把文件里的原图交出去，core 不碰任何图形 API。
+#[no_mangle]
+pub extern "system" fn Java_com_qprs_musicplayer_PlaybackBridge_coverBytes<'local>(
+    env: JNIEnv<'local>,
+    _this: JObject<'local>,
+) -> JByteArray<'local> {
+    // 造数组失败（OOM 之类）就给 null：Kotlin 侧当「这一首没有封面」，通知照样显示。
+    env.byte_array_from_slice(&bridge::cover_bytes())
+        .unwrap_or_default()
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_qprs_musicplayer_PlaybackBridge_play(
     _env: JNIEnv,
@@ -153,6 +167,42 @@ pub extern "system" fn Java_com_qprs_musicplayer_PlaybackBridge_seekTo(
     position_ms: jlong,
 ) -> jboolean {
     flag(bridge::seek_to(position_ms))
+}
+
+/// 随机播放开着没有（桌面小部件的图标状态）。
+#[no_mangle]
+pub extern "system" fn Java_com_qprs_musicplayer_PlaybackBridge_shuffleOn(
+    _env: JNIEnv,
+    _this: JObject,
+) -> jboolean {
+    flag(bridge::shuffle_on())
+}
+
+/// 当前循环模式的编码（与 `bridge::REPEAT_*` 一致）。
+#[no_mangle]
+pub extern "system" fn Java_com_qprs_musicplayer_PlaybackBridge_repeatCode(
+    _env: JNIEnv,
+    _this: JObject,
+) -> jint {
+    bridge::repeat_code()
+}
+
+/// 切换随机播放，返回切换后的状态。
+#[no_mangle]
+pub extern "system" fn Java_com_qprs_musicplayer_PlaybackBridge_toggleShuffle(
+    _env: JNIEnv,
+    _this: JObject,
+) -> jboolean {
+    flag(bridge::toggle_shuffle())
+}
+
+/// 循环模式转一圈，返回切换后的编码。
+#[no_mangle]
+pub extern "system" fn Java_com_qprs_musicplayer_PlaybackBridge_cycleRepeat(
+    _env: JNIEnv,
+    _this: JObject,
+) -> jint {
+    bridge::cycle_repeat()
 }
 
 /// Rust 的 `bool` 和 JNI 的 `jboolean` 都是 1 字节，但**规范上不要直接当同一个类型用**，

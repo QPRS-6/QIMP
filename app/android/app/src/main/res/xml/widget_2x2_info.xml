@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2×2：卡片式——封面 · 歌名 · 随机 / 上一曲 / 播放 / 下一曲 / 循环。 -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_2x2_description"
+    android:initialLayout="@layout/widget_card"
+    android:minHeight="110dp"
+    android:minWidth="110dp"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="2"
+    android:targetCellWidth="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

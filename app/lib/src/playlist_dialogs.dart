@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:musicplayer/src/playlist_files.dart';
 import 'package:musicplayer/src/rust/api/library.dart';
 
 /// 问一个播放列表的名字。空名字返回 `null`（等于取消）。
@@ -75,6 +76,34 @@ class _NameDialogState extends State<_NameDialog> {
       ],
     );
   }
+}
+
+/// 问导出成哪种格式。取消返回 `null`。
+///
+/// 用 `SimpleDialog` 而不是 `AlertDialog`：两个选项各自带一句说明，
+/// 用户不该为了选格式先去查「m3u8 和 xspf 到底差在哪」。
+Future<PlaylistExportFormat?> chooseExportFormat(
+  BuildContext context, {
+  required String playlistName,
+}) {
+  return showDialog<PlaylistExportFormat>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: Text('把「$playlistName」导出成'),
+      children: [
+        for (final format in PlaylistExportFormat.values)
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop(format),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.description_outlined),
+              title: Text(format.label),
+              subtitle: Text(format.description),
+            ),
+          ),
+      ],
+    ),
+  );
 }
 
 /// 删除列表前的确认。

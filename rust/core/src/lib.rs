@@ -16,14 +16,16 @@ pub mod error;
 pub mod lyric;
 pub mod metadata;
 pub mod models;
+pub mod playlist_file;
 pub mod scan;
 
 pub use db::Db;
 pub use error::{CoreError, Result};
 pub use lyric::{LyricLine, Lyrics};
 pub use models::{
-    Album, Artist, MediaKind, PlayState, Playlist, ScanMode, ScanProgress, ScanSummary, SortKey,
-    SortOrder, Stats, Track,
+    Album, Artist, MediaKind, PlayState, Playlist, PlaylistFileFormat, PlaylistImport, QueueTrack,
+    ResumePoint, ResumeQueue, ScanMode, ScanProgress, ScanSummary, SortKey, SortOrder, Stats,
+    Track, MISSING_PREVIEW_LIMIT,
 };
 pub use scan::{default_audio_extensions, is_audio_path, media_kind, scan_roots, ScanOptions};
 

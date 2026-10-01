@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 应用名。清单里也用它，避免两处各写一遍。 -->
+    <string name="app_name">QIMP</string>
+
+    <!-- 桌面小部件：四个尺寸各一条，标签与说明都出现在系统的「添加小部件」里。 -->
+    <string name="widget_2x1_label">播放器 2×1</string>
+    <string name="widget_2x1_description">封面 · 歌名 · 上一曲 / 播放 / 下一曲</string>
+    <string name="widget_4x1_label">播放器 4×1</string>
+    <string name="widget_4x1_description">封面 · 歌名 · 上一曲 / 播放 / 下一曲</string>
+    <string name="widget_2x2_label">播放器 2×2</string>
+    <string name="widget_2x2_description">封面 · 歌名 · 随机 / 上一曲 / 播放 / 下一曲 / 循环</string>
+    <string name="widget_4x2_label">播放器 4×2</string>
+    <string name="widget_4x2_description">封面 · 歌名 · 随机 / 上一曲 / 播放 / 下一曲 / 循环</string>
+
+    <!-- 小部件里的无障碍文字：图标按钮与封面都得说清楚自己是什么。 -->
+    <string name="widget_cover">当前播放的封面</string>
+    <string name="widget_previous">上一曲</string>
+    <string name="widget_toggle">播放或暂停</string>
+    <string name="widget_next">下一曲</string>
+    <string name="widget_shuffle">随机播放</string>
+    <string name="widget_repeat">循环模式</string>
+    <string name="widget_settings">小部件设置</string>
+    <string name="widget_unknown_track">未知曲目</string>
+
+    <!-- 小部件设置页 -->
+    <string name="widget_settings_title">小部件设置</string>
+    <string name="widget_settings_preview">预览</string>
+    <string name="widget_settings_preview_note">预览只是示意：桌面上的小部件背景是透明的，直接贴在壁纸上。</string>
+    <string name="widget_settings_preview_track">示例曲目 · 示例歌手</string>
+    <string name="widget_settings_cover">封面大小</string>
+    <string name="widget_settings_button_color">按钮颜色</string>
+    <string name="widget_settings_title_color">标题颜色</string>
+    <string name="widget_settings_reset">恢复默认</string>
+    <string name="widget_settings_note">改动立刻生效，桌面上所有播放小部件共用这一套。\n背景是透明的（直接贴在壁纸上），所以默认用白色 + 暗影；换成深色时请挑一张浅色壁纸。</string>
+    <string name="widget_settings_percent">%1$d%%</string>
+</resources>

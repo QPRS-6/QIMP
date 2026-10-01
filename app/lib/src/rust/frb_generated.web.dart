@@ -48,6 +48,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CoverData dco_decode_box_autoadd_cover_data(dynamic raw);
 
   @protected
+  Lyrics dco_decode_box_autoadd_lyrics(dynamic raw);
+
+  @protected
+  ResumePoint dco_decode_box_autoadd_resume_point(dynamic raw);
+
+  @protected
+  ResumeQueue dco_decode_box_autoadd_resume_queue(dynamic raw);
+
+  @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
@@ -57,10 +66,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CoverData dco_decode_cover_data(dynamic raw);
 
   @protected
+  DeleteSummary dco_decode_delete_summary(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  List<int> dco_decode_list_CastedPrimitive_i_64(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
@@ -72,7 +87,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Artist> dco_decode_list_artist(dynamic raw);
 
   @protected
+  List<LyricLine> dco_decode_list_lyric_line(dynamic raw);
+
+  @protected
   List<Playlist> dco_decode_list_playlist(dynamic raw);
+
+  @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
@@ -81,13 +102,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<QueueEntry> dco_decode_list_queue_entry(dynamic raw);
 
   @protected
+  List<QueueTrack> dco_decode_list_queue_track(dynamic raw);
+
+  @protected
   List<Track> dco_decode_list_track(dynamic raw);
+
+  @protected
+  LyricLine dco_decode_lyric_line(dynamic raw);
+
+  @protected
+  Lyrics dco_decode_lyrics(dynamic raw);
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
   CoverData? dco_decode_opt_box_autoadd_cover_data(dynamic raw);
+
+  @protected
+  Lyrics? dco_decode_opt_box_autoadd_lyrics(dynamic raw);
+
+  @protected
+  ResumePoint? dco_decode_opt_box_autoadd_resume_point(dynamic raw);
+
+  @protected
+  ResumeQueue? dco_decode_opt_box_autoadd_resume_queue(dynamic raw);
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
@@ -105,10 +144,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Playlist dco_decode_playlist(dynamic raw);
 
   @protected
+  PlaylistFileFormat dco_decode_playlist_file_format(dynamic raw);
+
+  @protected
+  PlaylistImport dco_decode_playlist_import(dynamic raw);
+
+  @protected
   QueueEntry dco_decode_queue_entry(dynamic raw);
 
   @protected
+  QueueTrack dco_decode_queue_track(dynamic raw);
+
+  @protected
   RepeatMode dco_decode_repeat_mode(dynamic raw);
+
+  @protected
+  ResumePoint dco_decode_resume_point(dynamic raw);
+
+  @protected
+  ResumeQueue dco_decode_resume_queue(dynamic raw);
 
   @protected
   ScanMode dco_decode_scan_mode(dynamic raw);
@@ -159,6 +213,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CoverData sse_decode_box_autoadd_cover_data(SseDeserializer deserializer);
 
   @protected
+  Lyrics sse_decode_box_autoadd_lyrics(SseDeserializer deserializer);
+
+  @protected
+  ResumePoint sse_decode_box_autoadd_resume_point(SseDeserializer deserializer);
+
+  @protected
+  ResumeQueue sse_decode_box_autoadd_resume_queue(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
@@ -168,10 +231,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CoverData sse_decode_cover_data(SseDeserializer deserializer);
 
   @protected
+  DeleteSummary sse_decode_delete_summary(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  List<int> sse_decode_list_CastedPrimitive_i_64(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
@@ -183,7 +252,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Artist> sse_decode_list_artist(SseDeserializer deserializer);
 
   @protected
+  List<LyricLine> sse_decode_list_lyric_line(SseDeserializer deserializer);
+
+  @protected
   List<Playlist> sse_decode_list_playlist(SseDeserializer deserializer);
+
+  @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -192,13 +267,35 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<QueueEntry> sse_decode_list_queue_entry(SseDeserializer deserializer);
 
   @protected
+  List<QueueTrack> sse_decode_list_queue_track(SseDeserializer deserializer);
+
+  @protected
   List<Track> sse_decode_list_track(SseDeserializer deserializer);
+
+  @protected
+  LyricLine sse_decode_lyric_line(SseDeserializer deserializer);
+
+  @protected
+  Lyrics sse_decode_lyrics(SseDeserializer deserializer);
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
   CoverData? sse_decode_opt_box_autoadd_cover_data(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  Lyrics? sse_decode_opt_box_autoadd_lyrics(SseDeserializer deserializer);
+
+  @protected
+  ResumePoint? sse_decode_opt_box_autoadd_resume_point(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ResumeQueue? sse_decode_opt_box_autoadd_resume_queue(
     SseDeserializer deserializer,
   );
 
@@ -218,10 +315,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Playlist sse_decode_playlist(SseDeserializer deserializer);
 
   @protected
+  PlaylistFileFormat sse_decode_playlist_file_format(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PlaylistImport sse_decode_playlist_import(SseDeserializer deserializer);
+
+  @protected
   QueueEntry sse_decode_queue_entry(SseDeserializer deserializer);
 
   @protected
+  QueueTrack sse_decode_queue_track(SseDeserializer deserializer);
+
+  @protected
   RepeatMode sse_decode_repeat_mode(SseDeserializer deserializer);
+
+  @protected
+  ResumePoint sse_decode_resume_point(SseDeserializer deserializer);
+
+  @protected
+  ResumeQueue sse_decode_resume_queue(SseDeserializer deserializer);
 
   @protected
   ScanMode sse_decode_scan_mode(SseDeserializer deserializer);
@@ -275,6 +389,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_lyrics(Lyrics self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_resume_point(
+    ResumePoint self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_resume_queue(
+    ResumeQueue self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
@@ -284,10 +413,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_cover_data(CoverData self, SseSerializer serializer);
 
   @protected
+  void sse_encode_delete_summary(DeleteSummary self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_CastedPrimitive_i_64(
+    List<int> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
@@ -299,7 +437,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_artist(List<Artist> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_lyric_line(
+    List<LyricLine> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_playlist(List<Playlist> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
@@ -314,7 +461,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_queue_track(
+    List<QueueTrack> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_track(List<Track> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_lyric_line(LyricLine self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_lyrics(Lyrics self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
@@ -322,6 +481,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cover_data(
     CoverData? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_lyrics(
+    Lyrics? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_resume_point(
+    ResumePoint? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_resume_queue(
+    ResumeQueue? self,
     SseSerializer serializer,
   );
 
@@ -344,10 +521,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_playlist(Playlist self, SseSerializer serializer);
 
   @protected
+  void sse_encode_playlist_file_format(
+    PlaylistFileFormat self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_playlist_import(
+    PlaylistImport self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_queue_entry(QueueEntry self, SseSerializer serializer);
 
   @protected
+  void sse_encode_queue_track(QueueTrack self, SseSerializer serializer);
+
+  @protected
   void sse_encode_repeat_mode(RepeatMode self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_resume_point(ResumePoint self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_resume_queue(ResumeQueue self, SseSerializer serializer);
 
   @protected
   void sse_encode_scan_mode(ScanMode self, SseSerializer serializer);

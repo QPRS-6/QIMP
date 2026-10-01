@@ -1,0 +1,10 @@
+<!-- 小部件上的「播放」。颜色走 @color/widget_icon：白天 / 夜晚各一套。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@color/widget_icon"
+        android:pathData="M8,5v14l11,-7z" />
+</vector>

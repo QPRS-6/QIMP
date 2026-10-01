@@ -225,6 +225,8 @@ pub fn scan_roots<P: AsRef<Path>>(
     }
 
     // ---- 3) 逐个读取并入库 ----
+    // 这里**只建索引**：新行的 `in_library` 走列默认值 0，也就是不会自动进曲库，
+    // 收不收进来由用户在主页上决定（`upsert_track` 在冲突分支也刻意不碰这个标记）。
     for (index, file) in pending.iter().enumerate() {
         let key = file.path.to_string_lossy().into_owned();
         progress(ScanProgress {

@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:musicplayer/src/playlist_files.dart';
 import 'package:musicplayer/src/rust/api/library.dart';
 
 /// 播放列表的读写入口。
@@ -30,4 +33,19 @@ class PlaylistApi {
   /// 把一首歌移出列表；不在里面时返回 `false`。
   bool remove(int playlistId, int trackId) =>
       removeFromPlaylist(playlistId: playlistId, trackId: trackId);
+
+  /// 导入一份列表文件（xspf / m3u8），返回新建列表的 id 与统计。
+  ///
+  /// 只收**内容**：文件是用户用系统对话框挑的（`PlaylistFiles.pick`），
+  /// 解析与落库都在 Rust 侧。
+  Future<PlaylistImport> importFile({
+    required String fileName,
+    required Uint8List bytes,
+  }) => importPlaylist(fileName: fileName, bytes: bytes);
+
+  /// 把列表导出成文本，交给 `PlaylistFiles.save` 落盘。
+  String exportText({
+    required int playlistId,
+    required PlaylistExportFormat format,
+  }) => exportPlaylist(playlistId: playlistId, format: format.toFfi);
 }

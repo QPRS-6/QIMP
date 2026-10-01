@@ -22,16 +22,22 @@ IconButton _shuffleButton(WidgetTester tester) =>
     );
 
 /// 曲库页接线的最小骨架。
+///
+/// `trackDurationMs` 是**曲库**里记的时长（默认与夹具一致）；给 0 就是
+/// 「曲库不知道这首歌多长」——真机上那种从 mp4 扒出来的音频就是这样。
 Widget _harness({
   required PlayerSnapshot snapshot,
   required List<int> seeked,
+  int trackDurationMs = fakeDurationMs,
   VoidCallback? onOpenPlayer,
   VoidCallback? onToggleShuffle,
 }) => MaterialApp(
   home: Scaffold(
     bottomNavigationBar: NowPlayingBar(
       snapshot: snapshot,
-      track: snapshot.trackId == 0 ? null : fakeTrack(id: snapshot.trackId),
+      track: snapshot.trackId == 0
+          ? null
+          : fakeTrack(id: snapshot.trackId, durationMs: trackDurationMs),
       onToggle: () {},
       onNext: () {},
       onPrevious: () {},
@@ -180,6 +186,49 @@ void main() {
     expect(_shuffleButton(tester).tooltip, '随机播放：开（点击关闭）');
   });
 
+  testWidgets('随机开着时，单曲循环的提示会说明它按列表循环走', (tester) async {
+    // 随机 + 单曲循环时，真正说话的是随机（见 `rust/audio` 的 PlayQueue::advance）：
+    // 列表一轮放完会自动重开一轮，而不是同一首无限循环。提示里得说清楚。
+    Future<void> pump(RepeatMode mode, {required bool shuffle}) =>
+        tester.pumpWidget(
+          _harness(
+            snapshot: fakeSnapshot(repeat: mode, shuffle: shuffle),
+            seeked: <int>[],
+          ),
+        );
+
+    await pump(RepeatMode.one, shuffle: true);
+    expect(
+      _repeatButton(tester).tooltip,
+      '循环：单曲循环（随机下按列表循环走，点击切换）',
+    );
+
+    // 关掉随机：回到普通文案（这时单曲循环才真的循环这一首）。
+    await pump(RepeatMode.one, shuffle: false);
+    expect(_repeatButton(tester).tooltip, '循环：单曲循环（点击切换）');
+
+    // 另外两种模式不受随机影响。
+    await pump(RepeatMode.all, shuffle: true);
+    expect(_repeatButton(tester).tooltip, '循环：列表循环（点击切换）');
+    await pump(RepeatMode.off, shuffle: true);
+    expect(_repeatButton(tester).tooltip, '循环：关闭（点击切换）');
+  });
+
+  testWidgets('继续播放的状态：显示上次那首、停在原进度、并标明没在响', (tester) async {
+    // 启动时把上次那一首装进引擎（不播放）之后，播放条就是长这样：
+    // 用户点一下 ▶ 才接着出声。
+    await tester.pumpWidget(
+      _harness(
+        snapshot: fakeSnapshot(positionMs: 42000, state: PlayerState.paused),
+        seeked: <int>[],
+      ),
+    );
+
+    expect(find.text('测试曲目'), findsOneWidget);
+    expect(find.textContaining('已暂停'), findsOneWidget, reason: '要能看出它还没响');
+    expect(_sliderValue(tester), 42000, reason: '进度条应停在「上次听到哪儿」');
+  });
+
   testWidgets('点标题区域打开播放界面；没有曲目时点不动', (tester) async {
     var opened = 0;
     await tester.pumpWidget(
@@ -232,5 +281,42 @@ void main() {
       ),
     );
     expect(_sliderValue(tester), 29800);
+  });
+
+  testWidgets('曲库没记时长时，用解码器算出来的那份：进度条照样能用', (tester) async {
+    // 真机上遇到的：从 mp4 扒出来、名字叫 `.mp3` 的音频，标签里读不出时长
+    // （曲库那份是 0），但解码器知道它是 336 秒。
+    await tester.pumpWidget(
+      _harness(
+        snapshot: fakeSnapshot(positionMs: 20038, durationMs: 336967),
+        seeked: <int>[],
+        trackDurationMs: 0,
+      ),
+    );
+
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    expect(slider.max, 336967, reason: '总长该用引擎那份');
+    expect(slider.value, 20038);
+    expect(slider.onChanged, isNotNull, reason: '知道总长就该能拖');
+    expect(find.textContaining('5:37'), findsOneWidget, reason: '副标题也要报出总长');
+  });
+
+  testWidgets('两份都不知道时长时不能崩，只是不给拖', (tester) async {
+    // 回归用例：这里曾经给 `value` 用了 `double.maxFinite` 当上界，于是
+    // 「时长未知 + 已经在播」时 value(20038) > max(1)，Flutter 直接断言失败，
+    // 真机上整个界面变成一屏红字。
+    await tester.pumpWidget(
+      _harness(
+        snapshot: fakeSnapshot(positionMs: 20038),
+        seeked: <int>[],
+        trackDurationMs: 0,
+      ),
+    );
+
+    expect(tester.takeException(), isNull, reason: '时长未知也不该崩');
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    expect(slider.value, 0, reason: '不知道总长，进度条只能画成空的');
+    expect(slider.onChanged, isNull, reason: '不给拖到没有意义的位置');
+    expect(find.textContaining('--:--'), findsOneWidget);
   });
 }

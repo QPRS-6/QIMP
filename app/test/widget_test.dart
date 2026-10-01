@@ -31,7 +31,7 @@ void main() {
     expect(find.text('重试'), findsOneWidget);
   });
 
-  test('应用标题保持稳定', () {
-    expect(kAppTitle, '本地音乐播放器');
+  test('应用名保持稳定', () {
+    expect(kAppTitle, 'QIMP');
   });
 }

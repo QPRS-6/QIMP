@@ -19,7 +19,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="本地音乐播放器"
+        android:label="@string/app_name"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -63,6 +63,66 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
+        <!-- 桌面小部件：四个尺寸各一个接收者。
+             Android 认的是「组件」（包名 + 类名），所以尺寸必须由**各自的类**区分——
+             同一个类注册四次只会合成一个，系统里也就只剩一档可选。
+
+             exported=true：APPWIDGET_UPDATE 只由系统在添加上/刷新时发给我们，
+             外部应用就算发一次也只是让小部件重画一遍，没有副作用。
+             另外**不能**给它们加 permission，否则系统的更新广播会被挡在外面。 -->
+        <receiver
+            android:name=".MusicWidget2x1"
+            android:exported="true"
+            android:label="@string/widget_2x1_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_2x1_info" />
+        </receiver>
+        <receiver
+            android:name=".MusicWidget4x1"
+            android:exported="true"
+            android:label="@string/widget_4x1_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_4x1_info" />
+        </receiver>
+        <receiver
+            android:name=".MusicWidget2x2"
+            android:exported="true"
+            android:label="@string/widget_2x2_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_2x2_info" />
+        </receiver>
+        <receiver
+            android:name=".MusicWidget4x2"
+            android:exported="true"
+            android:label="@string/widget_4x2_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_4x2_info" />
+        </receiver>
+        <!-- 小部件右上角齿轮点进来的设置页：改封面大小 / 按钮颜色 / 标题颜色。
+             只由我们自己的 PendingIntent 拉起，所以 exported=false。
+             刻意不指定主题：用平台默认的（有标题栏那套），它是**原生**页面，
+             不该依赖 Flutter 的 MainActivity 主题。 -->
+        <activity
+            android:name=".WidgetSettingsActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="@string/widget_settings_title" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

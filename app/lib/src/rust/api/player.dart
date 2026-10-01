@@ -40,6 +40,13 @@ void playerPrevious() => RustLib.instance.api.crateApiPlayerPlayerPrevious();
 void playerSeek({required int positionMs}) =>
     RustLib.instance.api.crateApiPlayerPlayerSeek(positionMs: positionMs);
 
+/// 把队列当前项装进引擎并定位到 `position_ms`，但**先不出声**。
+///
+/// 「继续播放」用：启动时先 `set_play_queue` 入队再调它，底部播放条就能显示
+/// 上次那首与进度；用户点一下播放才从那儿接着响。
+void playerLoad({required int positionMs}) =>
+    RustLib.instance.api.crateApiPlayerPlayerLoad(positionMs: positionMs);
+
 void playerSetRepeat({required RepeatMode mode}) =>
     RustLib.instance.api.crateApiPlayerPlayerSetRepeat(mode: mode);
 
@@ -59,6 +66,9 @@ class PlayerSnapshot {
   final int index;
   final int queueLen;
   final int trackId;
+
+  /// 解码器从容器里算出来的总时长（毫秒）；曲库那份为 0 时 UI 用它兜底。
+  final int durationMs;
   final RepeatMode repeat;
   final bool shuffle;
   final String? error;
@@ -69,6 +79,7 @@ class PlayerSnapshot {
     required this.index,
     required this.queueLen,
     required this.trackId,
+    required this.durationMs,
     required this.repeat,
     required this.shuffle,
     this.error,
@@ -81,6 +92,7 @@ class PlayerSnapshot {
       index.hashCode ^
       queueLen.hashCode ^
       trackId.hashCode ^
+      durationMs.hashCode ^
       repeat.hashCode ^
       shuffle.hashCode ^
       error.hashCode;
@@ -95,6 +107,7 @@ class PlayerSnapshot {
           index == other.index &&
           queueLen == other.queueLen &&
           trackId == other.trackId &&
+          durationMs == other.durationMs &&
           repeat == other.repeat &&
           shuffle == other.shuffle &&
           error == other.error;

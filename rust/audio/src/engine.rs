@@ -141,6 +141,11 @@ impl Session {
         let delta = played.saturating_sub(self.base_frames);
         self.base_ms + delta * 1000 / u64::from(self.spec.sample_rate.max(1))
     }
+
+    /// 当前曲目的总时长（毫秒，来自容器）；容器没写时为 0。
+    fn duration_ms(&self) -> u64 {
+        self.decoder.info().duration_ms
+    }
 }
 
 /// 声道映射：把源采样对齐到输出设备的声道数。
@@ -203,6 +208,11 @@ pub struct PlayerSnapshot {
     pub queue_len: u32,
     /// 当前曲目在曲库里的 id（`0` 表示没有）。UI 用它回查标题/艺术家。
     pub track_id: i64,
+    /// 当前曲目的总时长（毫秒）：由解码器从容器里算出；`0` 表示容器没写。
+    ///
+    /// 与曲库里那份的关系：曲库那份来自标签解析，通常更权威（列表里显示的就是它），
+    /// UI 应该在曲库那份为 `0` 时才用这里的值（见 `seek_slider.dart`）。
+    pub duration_ms: u64,
     pub repeat: RepeatMode,
     /// 随机播放开关。它与 `repeat` 是两个独立的维度：随机决定「下一首是谁」，
     /// 循环决定「一轮放完怎么办」。
@@ -219,6 +229,8 @@ struct Shared {
     index: AtomicUsize,
     queue_len: AtomicUsize,
     track_id: AtomicI64,
+    /// 当前曲目的总时长（毫秒，来自解码器）；没有会话时为 0。
+    duration_ms: AtomicU64,
     repeat: AtomicU8,
     shuffle: AtomicBool,
     error: Mutex<Option<String>>,
@@ -265,6 +277,8 @@ enum Command {
     },
     Rewind,
     Seek(u64),
+    /// 把当前这项装进引擎并定位到某个位置，但**先不出声**（「继续播放」用）。
+    Load(u64),
     SetRepeat(RepeatMode),
     /// 打开 / 关闭随机播放。
     SetShuffle(bool),
@@ -354,6 +368,15 @@ impl Engine {
         self.send(Command::Seek(position_ms))
     }
 
+    /// 把队列当前项装进引擎、定位到 `position_ms`，但**先不出声**。
+    ///
+    /// 「继续播放」用：启动时让界面能显示上次那首与进度，用户点一下 ▶ 才接着放。
+    /// 与 [`Engine::seek`] 的区别是它会在还没有会话时先建一个（`seek` 只动已经装好的），
+    /// 建好之后输出被按在暂停上，所以不会漏出一小段声音。
+    pub fn load(&self, position_ms: u64) -> Result<()> {
+        self.send(Command::Load(position_ms))
+    }
+
     pub fn set_repeat(&self, mode: RepeatMode) -> Result<()> {
         self.send(Command::SetRepeat(mode))
     }
@@ -371,6 +394,7 @@ impl Engine {
             index: self.shared.index.load(Ordering::Relaxed) as u32,
             queue_len: self.shared.queue_len.load(Ordering::Relaxed) as u32,
             track_id: self.shared.track_id.load(Ordering::Relaxed),
+            duration_ms: self.shared.duration_ms.load(Ordering::Relaxed),
             repeat: repeat_from_u8(self.shared.repeat.load(Ordering::Relaxed)),
             shuffle: self.shared.shuffle.load(Ordering::Relaxed),
             error: self.shared.error.lock().ok().and_then(|slot| slot.clone()),
@@ -490,6 +514,37 @@ fn play_item(
     }
 }
 
+/// 装载指定单曲但不播放：建会话、定位到 `position_ms`，然后把输出按在暂停上。
+///
+/// 返回装载后的状态（成功就是 `Paused`）。失败的原因写进共享快照，与 [`play_item`] 一致。
+fn prepare_item(
+    item: &QueueItem,
+    position_ms: u64,
+    session: &mut Option<Session>,
+    shared: &Shared,
+    output: &AudioOutputHandle,
+) -> PlayerState {
+    match start_session(item, position_ms, output) {
+        Ok(loaded) => {
+            *session = Some(loaded);
+            shared.clear_error();
+            // 流已经开起来了：那一刻环形缓冲还是空的（没人往里写），
+            // 但顺手按下暂停更稳妥——也让设备侧的状态与快照一致。
+            if let Err(err) = lock_output(output).and_then(|mut guard| guard.pause()) {
+                shared.fail(err.to_string());
+                stop_playback(session, output);
+                return PlayerState::Failed;
+            }
+            PlayerState::Paused
+        }
+        Err(err) => {
+            shared.fail(format!("{}: {err}", display_name(item)));
+            stop_playback(session, output);
+            PlayerState::Failed
+        }
+    }
+}
+
 /// 从队列当前项开始播放；队列为空则停住。
 fn play_current(
     queue: &PlayQueue,
@@ -589,6 +644,14 @@ fn handle_command(
                 }
             }
         }
+        Command::Load(position_ms) => {
+            // 换一项就是换一个会话：先关掉上一个（顺带丢弃环形缓冲里的旧数据）。
+            stop_playback(session, output);
+            *state = match queue.current().cloned() {
+                Some(item) => prepare_item(&item, position_ms, session, shared, output),
+                None => PlayerState::Stopped,
+            };
+        }
         Command::SetRepeat(mode) => queue.set_repeat(mode),
         Command::SetShuffle(on) => queue.set_shuffle(on),
     }
@@ -609,10 +672,14 @@ fn publish(shared: &Shared, state: PlayerState, queue: &PlayQueue, session: Opti
                 .position_ms
                 .store(current.position_ms(), Ordering::Relaxed);
             shared.track_id.store(current.track_id, Ordering::Relaxed);
+            shared
+                .duration_ms
+                .store(current.duration_ms(), Ordering::Relaxed);
         }
         None => {
             shared.position_ms.store(0, Ordering::Relaxed);
             shared.track_id.store(0, Ordering::Relaxed);
+            shared.duration_ms.store(0, Ordering::Relaxed);
         }
     }
 }
@@ -885,6 +952,91 @@ mod tests {
         assert!(
             pump_until(&output, 3_000, || engine.snapshot().position_ms > frozen),
             "恢复后位置应继续增长：{:?}",
+            engine.snapshot()
+        );
+    }
+
+    /// 引擎把解码器算出来的时长放进快照：曲库那份是 0 时（标签里读不出时长），
+    /// UI 只能靠这个值把进度条画对。
+    #[test]
+    fn snapshot_reports_container_duration() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+
+        engine
+            .replace_queue(vec![wav_item(temp.path(), "known.wav", 5, 3)], 0, true)
+            .expect("入队并播放");
+
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().duration_ms > 0),
+            "应报出容器里的时长：{:?}",
+            engine.snapshot()
+        );
+        let duration = engine.snapshot().duration_ms;
+        assert!(
+            (4_900..=5_100).contains(&duration),
+            "5 秒的 WAV 应报 5000ms，实际 {duration}"
+        );
+
+        // 停下来之后不该再留着上一首的时长（否则会拿去画一首不存在的曲目）。
+        engine.stop().expect("停止");
+        assert!(
+            pump_until(&output, 2_000, || engine.snapshot().state
+                == PlayerState::Stopped),
+            "应回到已停止：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(engine.snapshot().duration_ms, 0);
+    }
+
+    /// 「继续播放」：装载后停在指定位置且不出声，点播放才从那儿接着放。
+    #[test]
+    fn load_prepares_paused_session_at_position() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+        // 先只入队不播放（启动时的状态就是这样），再把它装到 6 秒处。
+        engine
+            .replace_queue(vec![wav_item(temp.path(), "long.wav", 30, 5)], 0, false)
+            .expect("入队");
+        engine.load(6_000).expect("装载");
+
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().state
+                == PlayerState::Paused),
+            "装载后应停在暂停状态：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(engine.snapshot().track_id, 5, "应认出装的是哪一首");
+        let loaded = engine.snapshot().position_ms;
+        assert!(
+            (5_500..=6_500).contains(&loaded),
+            "应停在目标位置附近：{loaded}"
+        );
+
+        // 暂停着就不该自己往前走（既不出声也不解码）。
+        for _ in 0..20 {
+            pump(&output, 512);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            engine.snapshot().position_ms,
+            loaded,
+            "装载后位置不该自己增长"
+        );
+
+        // 点播放：从装载的位置接着放，而不是回到开头。
+        engine.play().expect("播放");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().state
+                == PlayerState::Playing),
+            "点了播放就该响：{:?}",
+            engine.snapshot()
+        );
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > loaded),
+            "应从装载的位置继续：{:?}",
             engine.snapshot()
         );
     }

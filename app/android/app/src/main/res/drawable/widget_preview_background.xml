@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设置页里那块「预览」的底：一层灰渐变。
+  为什么不用纯色：小部件在桌面上的背景是**透明的**，直接贴在壁纸上——壁纸可能是白的
+  也可能是黑的。用从深到浅的渐变当背景，白色和黑色的文字都能在预览里各看到一半。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:endColor="#FFB0B0B0"
+        android:startColor="#FF4A4A4A" />
+    <corners android:radius="12dp" />
+</shape>

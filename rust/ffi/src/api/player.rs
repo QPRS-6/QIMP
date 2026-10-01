@@ -98,6 +98,15 @@ pub fn player_seek(position_ms: u64) -> Result<(), String> {
     engine()?.seek(position_ms).map_err(|e| e.to_string())
 }
 
+/// 把队列当前项装进引擎并定位到 `position_ms`，但**先不出声**。
+///
+/// 「继续播放」用：启动时先 `set_play_queue` 入队再调它，底部播放条就能显示
+/// 上次那首与进度；用户点一下播放才从那儿接着响。
+#[frb(sync)]
+pub fn player_load(position_ms: u64) -> Result<(), String> {
+    engine()?.load(position_ms).map_err(|e| e.to_string())
+}
+
 #[frb(sync)]
 pub fn player_set_repeat(mode: RepeatMode) -> Result<(), String> {
     engine()?.set_repeat(mode).map_err(|e| e.to_string())
@@ -152,6 +161,8 @@ pub struct _PlayerSnapshot {
     pub index: u32,
     pub queue_len: u32,
     pub track_id: i64,
+    /// 解码器从容器里算出来的总时长（毫秒）；曲库那份为 0 时 UI 用它兜底。
+    pub duration_ms: u64,
     pub repeat: RepeatMode,
     pub shuffle: bool,
     pub error: Option<String>,

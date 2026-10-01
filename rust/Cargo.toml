@@ -21,6 +21,9 @@ serde_json = "1"
 lofty = "0.25"
 walkdir = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
+# 歌词文本编码：`.lrc` 在中文圈里大量是 GBK/GB18030（网易云、酷狗导出的都是）。
+# 纯 Rust、零 unsafe、无平台依赖，Android 与宿主机测试都用同一份实现。
+encoding_rs = "0.8"
 
 [profile.release]
 lto = "thin"

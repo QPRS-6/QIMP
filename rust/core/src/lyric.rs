@@ -25,6 +25,11 @@ pub struct Lyrics {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub offset_ms: i64,
+    /// 有没有可用的时间轴。
+    ///
+    /// `false` 表示这是**纯文本歌词**（内嵌歌词里很常见：整段文字、没有 `[mm:ss]`）——
+    /// 界面只把它当一段可滚动的文字显示，不做高亮、也不自动滚动。
+    pub synced: bool,
 }
 
 impl Lyrics {
@@ -88,7 +93,52 @@ pub fn parse_lrc(raw: &str) -> Lyrics {
     }
 
     lyrics.lines.sort_by_key(|l| l.time_ms);
+    // 时间戳相同的几句算**同一句**：双语歌词就是同一个时间点两行（原文 + 翻译）。
+    // 合成一条、文本里用换行隔开，界面按一条来高亮与滚动，两行一起亮。
+    lyrics.lines = merge_same_time(lyrics.lines);
+    // 只有带时间戳的行才会被收进来，所以“有行”就等于“有时间轴”。
+    lyrics.synced = !lyrics.lines.is_empty();
     lyrics
+}
+
+/// 把时间戳相同的相邻行合并成一条（文本之间用 `\n` 连接）。
+///
+/// 入参必须已按时间排序（[parse_lrc] 里就是这么调过来的）；排序是稳定的，
+/// 所以同一个时间点上的多行会保持它们在文件里的先后顺序——原文在前、翻译在后。
+fn merge_same_time(lines: Vec<LyricLine>) -> Vec<LyricLine> {
+    let mut merged: Vec<LyricLine> = Vec::with_capacity(lines.len());
+    for line in lines {
+        match merged.last_mut() {
+            Some(prev) if prev.time_ms == line.time_ms => {
+                prev.text.push('\n');
+                prev.text.push_str(&line.text);
+            }
+            _ => merged.push(line),
+        }
+    }
+    merged
+}
+
+/// 把「没有时间轴的纯文本」也变成一份歌词：一行一句，时间统一为 0、`synced = false`。
+///
+/// 内嵌歌词（ID3 的 USLT、Vorbis 的 `LYRICS`、MP4 的 `©lyr`）很多就是这种整段文字。
+/// 直接丢掉等于“这首歌没歌词”，显示出来至少还能跟着唱。
+/// 纯 `[tag]` / `[mm:ss]` 行会被丢掉——那种行没有可唱的内容。
+pub fn parse_plain(raw: &str) -> Lyrics {
+    let lines = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !(line.starts_with('[') && line.ends_with(']')))
+        .map(|line| LyricLine {
+            time_ms: 0,
+            text: line.to_string(),
+        })
+        .collect();
+    Lyrics {
+        lines,
+        ..Lyrics::default()
+    }
 }
 
 fn fill_meta(line: &str, lyrics: &mut Lyrics) {
@@ -212,6 +262,28 @@ mod tests {
         assert!(lyrics.lines.iter().all(|l| l.text == "Repeated chorus"));
     }
 
+    /// 同一个时间点的两句是**同一条**（双语歌词：原文 + 翻译），文本里用换行分开。
+    #[test]
+    fn merges_lines_sharing_the_same_timestamp() {
+        let lyrics = parse_lrc("[00:10.00]原文一句\n[00:10.00]translation\n[00:20.00]下一句\n");
+
+        assert_eq!(lyrics.lines.len(), 2, "同一时间点的两行要合成一条");
+        assert_eq!(lyrics.lines[0].time_ms, 10_000);
+        assert_eq!(
+            lyrics.lines[0].text, "原文一句\ntranslation",
+            "文件里的先后顺序要保留：原文在前、翻译在后"
+        );
+        assert_eq!(lyrics.lines[1].text, "下一句");
+
+        // 乱序也要能合上：排序之后再合并。
+        let unsorted = parse_lrc("[00:30.00]b\n[00:10.00]a2\n[00:10.00]a1\n");
+        assert_eq!(unsorted.lines.len(), 2);
+        assert_eq!(unsorted.lines[0].text, "a2\na1", "按时间排好再合并");
+
+        // 时间不同就不该被合并。
+        assert_eq!(parse_lrc("[00:10.00]a\n[00:10.01]b\n").lines.len(), 2);
+    }
+
     #[test]
     fn applies_global_offset_and_clamps_to_zero() {
         let lyrics = parse_lrc("[offset:-500]\n[00:00.20]Early\n[00:10.00]Later");
@@ -269,5 +341,30 @@ mod tests {
     fn does_not_overwrite_first_metadata_value() {
         let lyrics = parse_lrc("[ti:First]\n[ti:Second]");
         assert_eq!(lyrics.title.as_deref(), Some("First"));
+    }
+
+    #[test]
+    fn marks_whether_the_timeline_is_usable() {
+        assert!(parse_lrc("[00:01.00]有时间的").synced);
+        // 没有一行带时间戳：不算同步歌词（空歌词自然也是 false）。
+        assert!(!parse_lrc("[ti:只有标签]纯文本").synced);
+        assert!(!Lyrics::default().synced);
+    }
+
+    #[test]
+    fn parses_plain_text_lyrics_without_timeline() {
+        let lyrics = parse_plain("[ti:标签行]\n第一句\n\n  第二句  \n[00:12.00]\n");
+
+        assert!(!lyrics.synced);
+        assert_eq!(
+            lyrics
+                .lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["第一句", "第二句"],
+            "空行、纯标签行、只有时间戳没有文字的行都要丢掉"
+        );
+        assert!(lyrics.lines.iter().all(|line| line.time_ms == 0));
     }
 }

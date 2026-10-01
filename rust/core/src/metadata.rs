@@ -16,6 +16,7 @@ use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey, Tag};
 
 use crate::error::Result;
+use crate::lyric::{parse_lrc, parse_plain, Lyrics};
 use crate::models::Track;
 
 /// 单独抽出来的封面数据。
@@ -128,6 +129,113 @@ pub fn read_cover(path: impl AsRef<Path>) -> Result<Option<Cover>> {
     }
 
     Ok(None)
+}
+
+/// 一首歌的歌词：**同目录同名的 `.lrc` 优先**，其次文件里内嵌的歌词。
+///
+/// `None` 表示两处都没有可显示的内容。`.lrc` 读不到（编码怪、权限不足）时会继续
+/// 看内嵌歌词，而不是直接报错——歌词只是锦上添花，不该让播放界面变成错误页。
+pub fn read_lyrics(path: impl AsRef<Path>) -> Result<Option<Lyrics>> {
+    let path = path.as_ref();
+
+    if let Some(lrc) = find_sibling_lrc(path) {
+        if let Ok(bytes) = fs::read(&lrc) {
+            if let Some(lyrics) = lyrics_from_text(&decode_text(&bytes)) {
+                return Ok(Some(lyrics));
+            }
+        }
+    }
+
+    if let Some(tagged) = read_tagged(path) {
+        let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+        if let Some(lyrics) = tag.and_then(embedded_lyrics) {
+            return Ok(Some(lyrics));
+        }
+    }
+
+    Ok(None)
+}
+
+/// 从标签里取内嵌歌词。
+///
+/// 两个键都得看：ID3v2 用的是 `USLT` → [`ItemKey::UnsyncLyrics`]
+/// （`ItemKey::Lyrics` 在 ID3v2 里对应的是带时间戳的 `SYLT`，lofty 明确不支持写入），
+/// 而 Vorbis 的 `LYRICS` / MP4 的 `©lyr` 走 `Lyrics`。
+/// 两个键都有时优先能给出时间轴的那份，另一份留作兜底。
+fn embedded_lyrics(tag: &Tag) -> Option<Lyrics> {
+    let mut fallback: Option<Lyrics> = None;
+    for key in [ItemKey::UnsyncLyrics, ItemKey::Lyrics] {
+        let Some(lyrics) = tag.get_string(key).and_then(lyrics_from_text) else {
+            continue;
+        };
+        if lyrics.synced {
+            return Some(lyrics);
+        }
+        fallback = fallback.or(Some(lyrics));
+    }
+    fallback
+}
+
+/// 一段文本 → 歌词：解析出时间轴就用时间轴，否则退化成纯文本（`synced = false`）。
+fn lyrics_from_text(raw: &str) -> Option<Lyrics> {
+    let synced = parse_lrc(raw);
+    if synced.synced {
+        return Some(synced);
+    }
+    let plain = parse_plain(raw);
+    (!plain.lines.is_empty()).then_some(plain)
+}
+
+/// 同目录下与音频**同名**的 `.lrc`（扩展名大小写不敏感）。
+fn find_sibling_lrc(path: &Path) -> Option<PathBuf> {
+    let dir = path.parent()?;
+    let stem = path.file_stem()?.to_string_lossy().into_owned();
+
+    // 先直接试最常见的写法，省掉一次目录遍历。
+    let direct = dir.join(format!("{stem}.lrc"));
+    if direct.is_file() {
+        return Some(direct);
+    }
+
+    // 手机上从电脑复制过来的歌词常是 `Song.LRC`，得按大小写不敏感再找一遍。
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy().into_owned();
+        let Some((file_stem, ext)) = name.rsplit_once('.') else {
+            continue;
+        };
+        if !ext.eq_ignore_ascii_case("lrc") || !file_stem.eq_ignore_ascii_case(&stem) {
+            continue;
+        }
+        let candidate = entry.path();
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// 文本文件的字节 → 字符串（BOM → UTF-8 → GB18030）。
+///
+/// 顺序是「BOM → UTF-8 → GB18030」：中文圈的 `.lrc` 与 m3u 大量是 GBK/GB18030 编码
+/// （各播放器导出、下载站给的都是），直接当 UTF-8 读会整片变成 `���`。
+/// GB18030 是 GBK 的超集，认不出的字节会变成替换字符，但中文能正常显示。
+///
+/// 播放列表（`playlist_file`）也用它，所以是 `pub(crate)`：解码规则只有这一处。
+pub(crate) fn decode_text(bytes: &[u8]) -> String {
+    use encoding_rs::{GB18030, UTF_16BE, UTF_16LE};
+
+    if let Some(body) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        return UTF_16LE.decode(body).0.into_owned();
+    }
+    if let Some(body) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        return UTF_16BE.decode(body).0.into_owned();
+    }
+    let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    if let Ok(text) = std::str::from_utf8(body) {
+        return text.to_string();
+    }
+    GB18030.decode(body).0.into_owned()
 }
 
 /// 文件的大小与 mtime（秒）。这是增量扫描的唯一依据。
@@ -488,6 +596,120 @@ mod tests {
         assert_eq!(track.size_bytes, 16);
         assert!(!track.has_cover);
         assert_eq!(track.path, file.to_string_lossy());
+    }
+
+    /// 同目录同名的 `.lrc` 优先；文件名大小写不一致也能找到。
+    #[test]
+    fn reads_sibling_lrc_before_anything_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Song.mp3");
+        fs::write(&file, b"x").unwrap();
+        fs::write(
+            dir.path().join("SONG.LRC"),
+            "[ti:标题]\n[00:01.00]第一句\n[00:05.50]第二句\n",
+        )
+        .unwrap();
+
+        let lyrics = read_lyrics(&file).unwrap().expect("应读到同目录的 .lrc");
+        assert!(lyrics.synced);
+        assert_eq!(lyrics.title.as_deref(), Some("标题"));
+        assert_eq!(lyrics.lines.len(), 2);
+        assert_eq!(lyrics.lines[0].time_ms, 1_000);
+        assert_eq!(lyrics.lines[1].text, "第二句");
+    }
+
+    /// 没有 `.lrc` 时看内嵌歌词：**带时间戳的**按同步歌词处理。
+    #[test]
+    fn falls_back_to_embedded_synced_lyrics() {
+        use lofty::tag::{Tag, TagExt, TagType};
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("embedded.wav");
+        fs::write(&file, minimal_wav(44_100)).unwrap();
+
+        let mut tag = Tag::new(TagType::Id3v2);
+        tag.set_title("带内嵌歌词".to_string());
+        // ID3v2 的 `USLT` 对应 `UnsyncLyrics`（`Lyrics` 是带时间戳的 `SYLT`，lofty 不支持写）。
+        tag.insert_text(ItemKey::UnsyncLyrics, "[00:02.00]内嵌第一句".to_string());
+        tag.save_to_path(&file, lofty::config::WriteOptions::default())
+            .unwrap();
+
+        let lyrics = read_lyrics(&file).unwrap().expect("应读到内嵌歌词");
+        assert!(lyrics.synced, "带时间戳的内嵌歌词应当算同步歌词");
+        assert_eq!(lyrics.lines.len(), 1);
+        assert_eq!(lyrics.lines[0].time_ms, 2_000);
+        assert_eq!(lyrics.lines[0].text, "内嵌第一句");
+    }
+
+    /// 内嵌歌词**没有时间戳**（USLT 常见形态）也要能显示，只是标记成不同步。
+    #[test]
+    fn keeps_plain_text_embedded_lyrics_as_unsynced() {
+        use lofty::tag::{Tag, TagExt, TagType};
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("plain.wav");
+        fs::write(&file, minimal_wav(44_100)).unwrap();
+
+        let mut tag = Tag::new(TagType::Id3v2);
+        tag.insert_text(ItemKey::UnsyncLyrics, "第一句\n\n第二句\n".to_string());
+        tag.save_to_path(&file, lofty::config::WriteOptions::default())
+            .unwrap();
+
+        let lyrics = read_lyrics(&file).unwrap().expect("应读到内嵌歌词");
+        assert!(!lyrics.synced, "没有时间戳就是不同步歌词");
+        assert_eq!(
+            lyrics
+                .lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["第一句", "第二句"],
+            "空行要被丢掉"
+        );
+    }
+
+    /// 两种都没有 → `None`（不是报错）。
+    #[test]
+    fn reports_none_when_there_is_no_lyric() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("silent.mp3");
+        fs::write(&file, b"x").unwrap();
+
+        assert!(read_lyrics(&file).unwrap().is_none());
+        // 文件本身不存在也不该报错：歌词丢了不影响播放。
+        assert!(read_lyrics(dir.path().join("gone.mp3")).unwrap().is_none());
+    }
+
+    /// 中文圈的 `.lrc` 大量是 GBK/GB18030：不能整片变成乱码。
+    #[test]
+    fn decodes_gbk_lrc_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("gbk.mp3");
+        fs::write(&file, b"x").unwrap();
+
+        // "第一句" 的 GBK 字节（故意不带 BOM）。
+        let gbk = [0xB5, 0xDA, 0xD2, 0xBB, 0xBE, 0xE4];
+        let mut content = b"[00:01.00]".to_vec();
+        content.extend_from_slice(&gbk);
+        fs::write(dir.path().join("gbk.lrc"), content).unwrap();
+
+        let lyrics = read_lyrics(&file).unwrap().expect("应读到歌词");
+        assert_eq!(lyrics.lines[0].text, "第一句");
+    }
+
+    /// 带 UTF-8 BOM 的文件也不能把 BOM 当成歌词内容。
+    #[test]
+    fn strips_utf8_bom() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("bom.mp3");
+        fs::write(&file, b"x").unwrap();
+
+        let mut content = vec![0xEF, 0xBB, 0xBF];
+        content.extend_from_slice("[00:01.00]带 BOM".as_bytes());
+        fs::write(dir.path().join("bom.lrc"), content).unwrap();
+
+        let lyrics = read_lyrics(&file).unwrap().expect("应读到歌词");
+        assert_eq!(lyrics.lines[0].text, "带 BOM");
     }
 
     #[test]

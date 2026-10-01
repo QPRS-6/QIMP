@@ -19,6 +19,9 @@ serde_json.workspace = true
 lofty.workspace = true
 walkdir.workspace = true
 rusqlite.workspace = true
+# 歌词解码：中文圈的 `.lrc` 大量是 GBK/GB18030 编码的（见 `metadata::read_lyrics`），
+# 纯 Rust、无平台依赖，符合 core “能在宿主机直接跑测试”的约束。
+encoding_rs.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

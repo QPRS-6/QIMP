@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  一行式小部件（2×1 / 4×1）：
+  左边封面，中间上面歌名（居中）、下面「上一曲 · 播放 · 下一曲」；右上角一个设置齿轮。
+  宽度由 RemoteViews 自己撑开，所以 2×1 与 4×1 共用这一份。
+
+  背景是**透明的**（直接贴在壁纸上），文字与图标用白色 + 暗影；
+  颜色与封面大小由用户在设置里改，见 PlaybackWidget.kt。
+
+  最外层是 FrameLayout：齿轮要浮在内容右上角，LinearLayout 里做不到「叠上去」。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="2dp">
+
+        <!-- 封面：框子比默认画出来的图大一圈（62dp），多出来的地方用 padding 吃掉，
+             这样「封面大小」能往大也能往小调，见 PlaybackWidget.applyCoverSize。
+             高度跟着这一行的高（2×1 与 4×1 高度不同），图按 fitCenter 缩进内容区。 -->
+        <ImageView
+            android:id="@+id/widget_art"
+            android:layout_width="62dp"
+            android:layout_height="match_parent"
+            android:contentDescription="@string/widget_cover"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_widget_note" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="20dp"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/widget_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:maxLines="1"
+                android:shadowColor="#B3000000"
+                android:shadowDx="0"
+                android:shadowDy="1"
+                android:shadowRadius="4"
+                android:text="@string/app_name"
+                android:textColor="@color/widget_text"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/widget_previous"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="@string/widget_previous"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:padding="2dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_widget_previous" />
+
+                <ImageButton
+                    android:id="@+id/widget_toggle"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="@string/widget_toggle"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:padding="2dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_widget_play" />
+
+                <ImageButton
+                    android:id="@+id/widget_next"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="@string/widget_next"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:padding="2dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_widget_next" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/widget_settings"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:layout_gravity="top|end"
+        android:contentDescription="@string/widget_settings"
+        android:padding="2dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_widget_settings" />
+</FrameLayout>

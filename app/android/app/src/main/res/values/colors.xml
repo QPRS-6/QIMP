@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      小部件**没有背景**（直接贴在壁纸上），所以文字与图标一律白色、文字再带一层暗影：
+      深色壁纸上白色本身就看得很清楚，浅色壁纸上靠那道暗影压出对比。
+      白天 / 夜晚同一套值，因此没有 values-night 那一份。
+    -->
+    <color name="widget_text">#FFFFFFFF</color>
+    <color name="widget_icon">#FFFFFFFF</color>
+    <!-- 主题色（与 App 的 teal 种子色一致）：随机 / 循环打开时用它点亮。 -->
+    <color name="widget_icon_active">#FF4DB6AC</color>
+</resources>

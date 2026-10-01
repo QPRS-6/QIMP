@@ -46,17 +46,25 @@ class RepeatButton extends StatelessWidget {
     super.key,
     required this.mode,
     required this.onPressed,
+    this.shuffle = false,
     this.iconSize,
   });
 
   final RepeatMode mode;
   final VoidCallback onPressed;
+
+  /// 随机播放是不是开着。
+  ///
+  /// 只影响提示文案：随机下「单曲循环」按列表循环走（见 `rust/audio` 的
+  /// `PlayQueue::advance`），不说清楚用户会以为这个按钮坏了。
+  final bool shuffle;
+
   final double? iconSize;
 
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      tooltip: repeatTooltip(mode),
+      tooltip: repeatTooltip(mode, shuffle: shuffle),
       onPressed: onPressed,
       color: repeatColor(mode, Theme.of(context).colorScheme),
       iconSize: iconSize,
@@ -109,13 +117,20 @@ IconData repeatIcon(RepeatMode mode) {
 Color? repeatColor(RepeatMode mode, ColorScheme scheme) =>
     mode == RepeatMode.off ? null : scheme.primary;
 
-String repeatTooltip(RepeatMode mode) {
+/// 循环按钮的提示。
+///
+/// [shuffle] 为真时「单曲循环」会多一句说明：那种组合下随机说了算，
+/// 单曲循环按列表循环走——列表放完自动重开一轮（见 `rust/audio` 的
+/// `PlayQueue::advance`）。不写清楚，用户会以为这个开关没生效。
+String repeatTooltip(RepeatMode mode, {bool shuffle = false}) {
   switch (mode) {
     case RepeatMode.off:
       return '循环：关闭（点击切换）';
     case RepeatMode.all:
       return '循环：列表循环（点击切换）';
     case RepeatMode.one:
-      return '循环：单曲循环（点击切换）';
+      return shuffle
+          ? '循环：单曲循环（随机下按列表循环走，点击切换）'
+          : '循环：单曲循环（点击切换）';
   }
 }

@@ -18,6 +18,9 @@ pub enum CoreError {
     #[error("不支持的音频格式: {0}")]
     UnsupportedFormat(PathBuf),
 
+    #[error("无法解析播放列表文件: {0}")]
+    PlaylistFormat(String),
+
     #[error("数据不一致: {0}")]
     Integrity(String),
 }

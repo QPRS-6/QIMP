@@ -3,6 +3,16 @@
 import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:musicplayer/src/rust/api/player.dart';
 
+/// 「这首歌到底多长」：曲库记的那份优先，它记不出来时用解码器解出来的那份。
+///
+/// 为什么会有两份：曲库那份来自标签/容器解析（lofty），通常更权威，列表里显示的就是它；
+/// 但**有些文件标签里就是没有时长，却能正常解码播放**——真机上遇到过一个
+/// 「从 mp4 里扒出来、文件名叫 `.mp3`」的音频：标签能读出标题与艺术家，时长是 0。
+/// 解码器那边是从容器里算出来的（336 秒），正好补上这个洞。
+/// 两份都没有时返回 0，表示“不知道”（UI 显示 `--:--`，进度条也不给拖）。
+int trackTotalMs({required int fromLibrary, required int fromEngine}) =>
+    fromLibrary > 0 ? fromLibrary : fromEngine;
+
 /// 进度条：把「拖动跟手 / 跳转后锁住目标位置」这段时序收在一处。
 ///
 /// 为什么需要它：`seek` 是异步的（口令丢给播放线程），紧接着读到的那次快照
@@ -23,8 +33,8 @@ class SeekSlider extends StatefulWidget {
   /// 播放状态快照（当前位置 / 当前曲目都在里面）。
   final PlayerSnapshot snapshot;
 
-  /// 当前曲目的总时长（毫秒）；`0` 表示未知，此时不允许拖动
-  /// （否则会滑到一个没有任何意义的位置）。
+  /// 曲库里记的总时长（毫秒）；`0` 表示曲库不知道，此时会用
+  /// `snapshot.durationMs`（解码器从容器里算出来的那份）兜底。
   final int totalMs;
 
   /// 松手时把目标位置交出去（毫秒）。
@@ -95,19 +105,27 @@ class _SeekSliderState extends State<SeekSlider> {
 
   @override
   Widget build(BuildContext context) {
-    final total = widget.totalMs;
-    final upper = total > 0 ? total.toDouble() : double.maxFinite;
+    final total = trackTotalMs(
+      fromLibrary: widget.totalMs,
+      fromEngine: widget.snapshot.durationMs,
+    );
+    // 两份都不知道时长时：不给拖动（滑到哪儿都没有意义），
+    // 滑块也画成空的——`max` 只能给个占位值，`value` 必须跟着一起限制在
+    // 同一个范围里。**这里踩过真机上的坑**：以前 `value` 用
+    // `double.maxFinite` 当上界，于是「时长未知 + 已经在播」时
+    // `value`（例如 20038）会大于 `max`（1），Flutter 直接断言失败，
+    // 整个界面变成一屏红字。
+    final max = total > 0 ? total.toDouble() : 1.0;
     // 拖动中跟手 → 刚跳转锁在目标 → 其余跟随轮询值。
     final shown =
         _dragging ?? _pendingSeek ?? widget.snapshot.positionMs.toDouble();
-    final position = shown.clamp(0.0, upper).toDouble();
+    final position = shown.clamp(0.0, max).toDouble();
 
     return Slider(
-      // 时长未知（0）时不给拖动，避免滑到无意义的位置
       onChanged: total > 0 ? (value) => setState(() => _dragging = value) : null,
       onChangeEnd: total > 0 ? _commitSeek : null,
-      value: position,
-      max: total > 0 ? total.toDouble() : 1,
+      value: total > 0 ? position : 0,
+      max: max,
     );
   }
 }

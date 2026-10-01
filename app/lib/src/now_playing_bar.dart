@@ -23,6 +23,7 @@ class NowPlayingBar extends StatelessWidget {
     required this.onCycleRepeat,
     required this.onToggleShuffle,
     required this.onOpenPlayer,
+    this.bottomSafeArea = true,
   });
 
   final PlayerSnapshot? snapshot;
@@ -43,6 +44,12 @@ class NowPlayingBar extends StatelessWidget {
   /// 点标题区域打开全屏播放界面（没有曲目时不可点）。
   final VoidCallback onOpenPlayer;
 
+  /// 是否自己吃掉底部系统栏的安全区（默认吃）。
+  ///
+  /// 主页把「曲库工具条」压在播放条下面，那种布局下安全区该由那条工具条负责；
+  /// 两边各加一次的话，中间会多出一条谁也说不清干什么的缝（见 `library_page`）。
+  final bool bottomSafeArea;
+
   @override
   Widget build(BuildContext context) {
     final snapshot = this.snapshot;
@@ -57,6 +64,7 @@ class NowPlayingBar extends StatelessWidget {
       color: theme.colorScheme.surfaceContainerHigh,
       child: SafeArea(
         top: false,
+        bottom: bottomSafeArea,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -76,6 +84,11 @@ class NowPlayingBar extends StatelessWidget {
                       onTap: track == null ? null : onOpenPlayer,
                       child: _TrackSummary(
                         track: track,
+                        // 曲库里没记时长时用解码器算出来的那份（见 SeekSlider 的说明）。
+                        durationMs: trackTotalMs(
+                          fromLibrary: track?.durationMs ?? 0,
+                          fromEngine: snapshot.durationMs,
+                        ),
                         // 播放失败时把原因直接摆出来，比只改个按钮颜色有用得多
                         errorText: snapshot.error,
                         hint: _stateHint(snapshot.state),
@@ -97,7 +110,11 @@ class NowPlayingBar extends StatelessWidget {
                     onPressed: onNext,
                     icon: const Icon(Icons.skip_next),
                   ),
-                  RepeatButton(mode: snapshot.repeat, onPressed: onCycleRepeat),
+                  RepeatButton(
+                    mode: snapshot.repeat,
+                    shuffle: snapshot.shuffle,
+                    onPressed: onCycleRepeat,
+                  ),
                 ],
               ),
             ),
@@ -125,9 +142,18 @@ class NowPlayingBar extends StatelessWidget {
 
 /// 标题 / 艺术家 / 时长，或者播放失败的原因。
 class _TrackSummary extends StatelessWidget {
-  const _TrackSummary({required this.track, this.errorText, this.hint});
+  const _TrackSummary({
+    required this.track,
+    required this.durationMs,
+    this.errorText,
+    this.hint,
+  });
 
   final Track? track;
+
+  /// 这首歌有多长（曲库那份优先，曲库不知道时用解码器算出来的）。
+  final int durationMs;
+
   final String? errorText;
   final String? hint;
 
@@ -150,7 +176,7 @@ class _TrackSummary extends StatelessWidget {
     }
     final subtitle = <String>[
       if (track.artist?.isNotEmpty ?? false) track.artist!,
-      formatDuration(track.durationMs),
+      formatDuration(durationMs),
       ?hint,
     ].join(' · ');
     return Column(

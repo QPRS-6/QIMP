@@ -15,6 +15,7 @@ class TrackTile extends StatelessWidget {
     this.playing = false,
     this.paused = false,
     this.trailing,
+    this.leading,
   });
 
   final Track track;
@@ -32,6 +33,9 @@ class TrackTile extends StatelessWidget {
   /// 覆盖右侧内容（默认是时长）。播放列表的编辑模式用它换成「移出」按钮。
   final Widget? trailing;
 
+  /// 覆盖左侧内容（默认是“正在播放 / 音乐”图标）。多选模式用它换成复选框。
+  final Widget? leading;
+
   @override
   Widget build(BuildContext context) {
     final subtitle = <String>[
@@ -45,12 +49,14 @@ class TrackTile extends StatelessWidget {
       onTap: onTap,
       onLongPress: onLongPress,
       selected: playing,
-      leading: Icon(
-        playing
-            ? (paused ? Icons.pause_circle_outline : Icons.equalizer)
-            : Icons.music_note,
-        color: playing ? accent : null,
-      ),
+      leading:
+          leading ??
+          Icon(
+            playing
+                ? (paused ? Icons.pause_circle_outline : Icons.equalizer)
+                : Icons.music_note,
+            color: playing ? accent : null,
+          ),
       title: Text(
         displayTitle(track),
         maxLines: 1,

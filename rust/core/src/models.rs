@@ -90,13 +90,97 @@ pub struct Playlist {
     pub created_at: i64,
 }
 
+/// 播放列表的**文件**格式。
+///
+/// 只支持这两种：它们是各播放器导出、分享时最通用的两种文本格式，
+/// 而且都不需要额外的依赖就能读写（见 [`crate::playlist_file`]）。
+/// 二进制的 `.wpl`、带媒体库路径的 `.itunesxml` 一概不认——那些既不好解析，
+/// 也不解决手机上的实际问题。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlaylistFileFormat {
+    /// `.m3u` / `.m3u8`：一行一个路径，`#` 开头是注释与 `#EXTINF`。
+    #[default]
+    M3u,
+    /// `.xspf`：XML，条目在 `<trackList><track><location>` 里。
+    Xspf,
+}
+
+impl PlaylistFileFormat {
+    /// 导出时的扩展名（不含点）。
+    pub fn extension(&self) -> &'static str {
+        match self {
+            PlaylistFileFormat::M3u => "m3u8",
+            PlaylistFileFormat::Xspf => "xspf",
+        }
+    }
+}
+
+/// 导入一份播放列表文件的结果。
+///
+/// 「对不上」的条目单独计数而不是直接报错：一份从别的机器导出的列表里总有几首
+/// 本机没有的歌，为此把整次导入判为失败对用户毫无帮助。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaylistImport {
+    /// 新建的列表 id。
+    pub playlist_id: PlaylistId,
+    /// 真正加进列表的条数（同一首歌在文件里重复出现只算一次）。
+    pub added: u32,
+    /// 对不上曲库的条数（本地索引里没有这个文件，多半是从没扫到过）。
+    pub missing: u32,
+    /// 对不上的前几条，给界面展示用；只保留前 [`MISSING_PREVIEW_LIMIT`] 条。
+    pub missing_paths: Vec<String>,
+    /// 文件里是网络地址（`http://` 之类）而跳过的条数：本地播放器放不了它们。
+    pub skipped: u32,
+}
+
+/// [`PlaylistImport::missing_paths`] 最多回给界面几条。
+///
+/// 一份列表全对不上时可能有几百条，全塞给界面只会让提示变成一堵墙。
+pub const MISSING_PREVIEW_LIMIT: usize = 10;
+
 /// 单曲播放进度，用于“继续播放”和“最近播放”。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayState {
     pub track_id: TrackId,
     pub position_ms: u64,
     pub play_count: u32,
+    /// 最近一次播放的时间（Unix 毫秒；`save_position` 与 `mark_played` 都写它）。
     pub last_played_at: i64,
+}
+
+/// 「继续播放」的落点：上次在放的那一首，以及听到哪儿了。
+///
+/// 与 [`PlayState`] 分开是因为界面要的是「这一首 + 位置」这一件事，
+/// 而不是计数与时间戳；`track` 直接带上，省得界面再查一次。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumePoint {
+    pub track: Track,
+    pub position_ms: u64,
+}
+
+/// 队列里的一项。
+///
+/// 只带 id + 路径：够重建播放队列了（引擎要的就是这两样），
+/// 不必为了「接着放」把标题、专辑、封面这些元数据也存一遍。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueTrack {
+    pub id: TrackId,
+    pub path: String,
+}
+
+/// 上次的播放队列：整队接着放要用。
+///
+/// 为什么不复用 [`ResumePoint`]：那个的语义是「上次听的是哪首、听到哪」，
+/// 界面拿它只够把**一首歌**摆回播放条上。用户要的是重启之后整队还在——
+/// 只有那一首的话，「下一曲」在重启后就是个死键（真机上就是这么被发现的）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumeQueue {
+    /// 队列本身，顺序就是播放顺序。曲目已被移除的不会出现在这里。
+    pub entries: Vec<QueueTrack>,
+    /// 上次停在队列里的第几个；一定落在 `entries` 范围内。
+    pub index: u32,
+    /// 那一首听到哪儿了。
+    pub position_ms: u64,
 }
 
 /// 库整体统计。
