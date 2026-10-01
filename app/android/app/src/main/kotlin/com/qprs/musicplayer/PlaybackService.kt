@@ -55,6 +55,12 @@ class PlaybackService : Service() {
     /** 上一次画出的「状态 + 曲目」：用来判断要不要重发通知。 */
     private var lastSignature = ""
 
+    /**
+     * 音量归零 / 蓝牙断开 → 自动暂停。盯着系统事件，只在真在播时才动手，
+     * 细节见 [PlaybackAutoStop]。
+     */
+    private lateinit var autoStop: PlaybackAutoStop
+
     private val ticker = object : Runnable {
         override fun run() {
             if (!polling) return
@@ -106,6 +112,12 @@ class PlaybackService : Service() {
         }
         polling = true
         handler.post(ticker)
+        // 自动暂停放在服务里而不是 Activity 里：它盯的是系统事件，与 Flutter 引擎在不在无关。
+        autoStop = PlaybackAutoStop(
+            context = applicationContext,
+            isPlaying = { PlaybackBridge.stateCode() == PlaybackBridge.STATE_PLAYING },
+            pause = { PlaybackBridge.pause() },
+        ).apply { start() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -141,6 +153,8 @@ class PlaybackService : Service() {
     override fun onDestroy() {
         polling = false
         handler.removeCallbacks(ticker)
+        // 先摘掉监听：服务没了就别再有人来碰播放。
+        autoStop.stop()
         session.isActive = false
         session.release()
         super.onDestroy()

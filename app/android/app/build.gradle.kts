@@ -48,6 +48,10 @@ dependencies {
     // 前台服务 + 通知栏控制用的媒体会话（MediaSessionCompat / MediaStyle / MediaButtonReceiver）。
     // Flutter 自带的依赖里没有它，但它不大，而且是这套通知栏方案的官方库。
     implementation("androidx.media:media:1.7.0")
+
+    // 宿主机单元测试：`cd app/android && ./gradlew :app:testDebugUnitTest`。
+    // 只测不碰 Android 运行时的纯逻辑（自动暂停那两条规则），所以用不上 Robolectric。
+    testImplementation("junit:junit:4.13.2")
 }
 
 flutter {

@@ -54,6 +54,9 @@ scripts/build-apk.sh --release    # release
 
 # 只跑 Dart 侧
 cd app && flutter analyze && flutter test
+
+# Android 侧（Kotlin）的单元测试：自动暂停的那两条规则
+cd app/android && ./gradlew :app:testDebugUnitTest
 ```
 
 ## 权限说明（重要）
@@ -80,6 +83,8 @@ cd app && flutter analyze && flutter test
 - [x] 随机播放（一轮之内不重复）与定时播放（到点暂停）
 - [x] 全屏播放界面：封面 / 标题 / 进度、上一曲·播放暂停·下一曲、随机 / 定时 / 循环；
       封面上右滑＝上一曲、左滑＝下一曲、上下滑＝音量加减（跟手线性：滑多少调多少，改的是系统媒体音量）
+- [x] 音量归零 / 蓝牙断开时自动暂停：平台侧盯着系统事件（媒体音量、音频输出设备），
+      与 Flutter 引擎在不在无关；停的是**播放**而不是清空播放项，点一下就能接着听
 - [x] 封面显示（列表与播放界面，内嵌图优先，其次同目录 `cover.jpg` / `folder.jpg`）
 - [ ] 专辑 / 艺术家页、播放列表、继续播放
 
