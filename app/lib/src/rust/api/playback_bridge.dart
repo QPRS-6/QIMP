@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `current_track`, `run`, `track_by_id`
+// These functions are ignored because they are not marked as `pub`: `code_of`, `current_track`, `next_repeat`, `run`, `track_by_id`
 
 /// 引擎当前状态；引擎没起来时按“已停止”处理（通知栏据此收掉自己）。
 Future<int> stateCode() =>
@@ -42,6 +42,38 @@ Future<bool> engineReady() =>
 /// 播放中的曲目播放失败的原因（给通知栏显示“播不了：…”）；没有则返回空串。
 Future<String> errorText() =>
     RustLib.instance.api.crateApiPlaybackBridgeErrorText();
+
+/// 随机播放开着没有。桌面小部件要据此把那个图标点亮（通知栏不显示它）。
+Future<bool> shuffleOn() =>
+    RustLib.instance.api.crateApiPlaybackBridgeShuffleOn();
+
+/// 当前循环模式的编码。
+Future<int> repeatCode() =>
+    RustLib.instance.api.crateApiPlaybackBridgeRepeatCode();
+
+/// 切换随机播放，返回切换**后**的状态（引擎没起来时是 `false`）。
+///
+/// 返回「切换后的状态」而不是「成功与否」：小部件点完要把图标画对，
+/// 它需要的是那一个确定的值。
+Future<bool> toggleShuffle() =>
+    RustLib.instance.api.crateApiPlaybackBridgeToggleShuffle();
+
+/// 循环模式转一圈：关 → 全部循环 → 单曲循环 → 关，返回切换**后**的编码。
+Future<int> cycleRepeat() =>
+    RustLib.instance.api.crateApiPlaybackBridgeCycleRepeat();
+
+/// 当前曲目的封面字节（内嵌图优先，其次同目录的 `cover.jpg` / `folder.jpg`，
+/// 判断规则在 `metadata::read_cover` 里）；没有封面时返回空。
+///
+/// 通知栏 / 锁屏那一份封面只能由这里给：Flutter 引擎可能已经不在了
+/// （用户把 App 从任务列表划掉），但正在放的那首的图照样得显示。
+/// 曲目不在曲库里、没有封面、文件读不出来——统统给空：通知该做的是退化成没有图，
+/// 而不是因为一张图整个显示不出来。
+///
+/// 给的是**原始字节**而不是 Bitmap：解码与缩放要用 `BitmapFactory`，
+/// 那是 Android 的东西，core 一行都不该碰。
+Future<Uint8List> coverBytes() =>
+    RustLib.instance.api.crateApiPlaybackBridgeCoverBytes();
 
 Future<bool> play() => RustLib.instance.api.crateApiPlaybackBridgePlay();
 
