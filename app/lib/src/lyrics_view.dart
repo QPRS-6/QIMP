@@ -18,6 +18,17 @@ typedef LyricsLoader = Future<Lyrics?> Function(int trackId);
 /// 一条歌词可能有两行（同一时间戳的原文 + 翻译），那种一条占两倍高度。
 const double kLyricLineHeight = 44;
 
+/// 点过某一句之后，允许位置比那句时间戳**早**多少毫秒仍算「就是这一句」。
+///
+/// 为什么需要它：跳转只能落到**不晚于**目标的包上（`SeekMode::Accurate` 的语义，
+/// 见 `rust/audio/tests/real_file_seek.rs`：mp3 一帧约 26ms、flac 一块可能上百毫秒），
+/// 所以点完那一句之后，位置其实还停在这句时间戳之前一点点。播放时几毫秒就追上来了，
+/// 暂停时位置不动——靠位置算出来的高亮就会**一直停在上一句**。
+///
+/// 取 500ms：比上面几种包的误差都宽，又不至于把顺序播放时的上一句误判成这一句
+/// （歌词句与句之间通常隔好几秒）。
+const int kLyricPinPreRollMs = 500;
+
 /// 一条歌词要占几行：文本里的换行数 + 1。
 ///
 /// 同一时间戳的原文 + 翻译在 core 里就合成了一条（文本用 `\n` 连接），
@@ -90,6 +101,11 @@ class _LyricsViewState extends State<LyricsView> {
 
   /// 上面两份数据对应的是哪一份歌词（换歌 / 加载完就重算）。
   Lyrics? _measured;
+
+  /// 用户点过的那一句的下标；`null` 表示没有钉住任何一句。
+  ///
+  /// 见 [kLyricPinPreRollMs]：点完之后位置还停在那句时间戳之前，靠位置算会亮成上一句。
+  int? _pinnedIndex;
 
   @override
   void dispose() {
@@ -170,7 +186,7 @@ class _LyricsViewState extends State<LyricsView> {
   /// 带时间轴：当前句高亮 + 自动滚到中间 + 点一句跳过去。
   Widget _syncedLyrics(BuildContext context, Lyrics lyrics) {
     _measure(lyrics);
-    final active = _activeLine(lyrics);
+    final active = _highlightLine(lyrics);
     // 换句了才滚：播放中每 500ms 会重建一次，不判断就会一直重启滚动动画。
     if (active != _activeIndex) {
       final wasUnknown = _activeIndex == null;
@@ -198,9 +214,15 @@ class _LyricsViewState extends State<LyricsView> {
             // 高度自己定死，滚动位置才算得准（见 `_heights` 的说明）。
             height: _heights[index],
             child: InkWell(
-              // 点一句就跳过去。不做乐观高亮：跳转是异步的，位置由播放快照回来
-              // 之后自然会亮起来，抢着改反而会闪。
-              onTap: line.timeMs > 0 ? () => widget.onSeek(line.timeMs) : null,
+              // 点一句就跳过去。跳转是异步的，所以这里只**钉住**点的那一句（记下标），
+              // 不猜位置：等播放快照回来时，只要位置还落在那句附近，它就还是当前句。
+              // 只跳不钉的话，暂停时会亮在上一句——理由见 [kLyricPinPreRollMs]。
+              onTap: line.timeMs > 0
+                  ? () {
+                      setState(() => _pinnedIndex = index);
+                      widget.onSeek(line.timeMs);
+                    }
+                  : null,
               child: Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -232,6 +254,8 @@ class _LyricsViewState extends State<LyricsView> {
   void _measure(Lyrics lyrics) {
     if (identical(_measured, lyrics)) return;
     _measured = lyrics;
+    // 换了歌词（换歌 / 重新加载）：旧下标指的是另一份歌词里的句子，不能再钉着。
+    _pinnedIndex = null;
     _heights = [
       for (final line in lyrics.lines)
         kLyricLineHeight * lyricLineCount(line.text),
@@ -297,6 +321,27 @@ class _LyricsViewState extends State<LyricsView> {
         ),
       ),
     );
+  }
+
+  /// 该高亮第几句。
+  ///
+  /// 默认按位置算（见 [_activeLine]）；**用户点过某一句时那一句优先**——理由见
+  /// [kLyricPinPreRollMs]。位置走出「点过那一句」这一段之后，钉子自动失效、回到
+  /// 按位置算：要么播放已经进了下一句，要么用户又跳到别处去了。
+  int? _highlightLine(Lyrics lyrics) {
+    final pinned = _pinnedIndex;
+    if (pinned != null && pinned < lyrics.lines.length) {
+      final start = lyrics.lines[pinned].timeMs;
+      final end = pinned + 1 < lyrics.lines.length
+          ? lyrics.lines[pinned + 1].timeMs
+          : null;
+      // 还没到下一句（最后一句就没有下一句），也没退到这句之前太远。
+      if (widget.positionMs >= start - kLyricPinPreRollMs &&
+          (end == null || widget.positionMs < end)) {
+        return pinned;
+      }
+    }
+    return _activeLine(lyrics);
   }
 
   /// 当前该高亮第几句：最后一句 `timeMs <= 位置` 的。

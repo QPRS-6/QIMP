@@ -29,6 +29,13 @@ Widget harness({
   ),
 );
 
+/// 某一句是不是高亮的（高亮 = 主题色，见 `lyrics_view` 里那段 `Text` 样式）。
+bool highlighted(WidgetTester tester, String text) {
+  final finder = find.text(text);
+  final theme = Theme.of(tester.element(finder));
+  return tester.widget<Text>(finder).style?.color == theme.colorScheme.primary;
+}
+
 void main() {
   test('期望的 .lrc 路径：把扩展名换成 .lrc，其它一律不动', () {
     expect(
@@ -164,5 +171,101 @@ void main() {
       tester.widget<Text>(find.text('第一句')).style?.color,
       theme.colorScheme.primary,
     );
+  });
+
+  /// 三条歌词的固定素材。`lyrics` 是同一个 Future：模拟播放中每几百毫秒重建一次。
+  Future<Lyrics?> threeLines() => Future<Lyrics?>.value(
+    fakeLyrics(<(int, String)>[(5_000, '第一句'), (10_000, '第二句'), (15_000, '第三句')]),
+  );
+
+  testWidgets('点哪句哪句亮：跳转落点在那句之前时也算（暂停时位置不会自己追上来）', (tester) async {
+    final lyrics = threeLines();
+    final seeked = <int>[];
+    await tester.pumpWidget(
+      harness(lyrics: lyrics, positionMs: 5_000, onSeek: seeked.add),
+    );
+    await tester.pumpAndSettle();
+    expect(highlighted(tester, '第一句'), isTrue);
+
+    // 点第二句（暂停中）：先把跳转报出去。
+    await tester.tap(find.text('第二句'));
+    await tester.pumpAndSettle();
+    expect(seeked, [10_000], reason: '点哪句就跳哪句');
+
+    // 快照回来：跳转只能落到不晚于目标的包上，位置停在这句时间戳**之前**一点点
+    // （这里按 mp3 一帧 26ms 量）。暂停时它不会再往前走，高亮必须还是这一句。
+    await tester.pumpWidget(
+      harness(lyrics: lyrics, positionMs: 9_980, onSeek: seeked.add),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      highlighted(tester, '第二句'),
+      isTrue,
+      reason: '点过的那一句优先，不能因为位置差几十毫秒就亮成上一句',
+    );
+    expect(highlighted(tester, '第一句'), isFalse);
+  });
+
+  testWidgets('点过的那一句只钉到下一句为止：播放走过去之后照旧跟着位置走', (tester) async {
+    final lyrics = threeLines();
+    await tester.pumpWidget(harness(lyrics: lyrics, positionMs: 5_000));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('第二句'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(harness(lyrics: lyrics, positionMs: 9_980));
+    await tester.pumpAndSettle();
+    expect(highlighted(tester, '第二句'), isTrue);
+
+    // 播过第三句的时间戳：钉子松开，按位置算就该是第三句。
+    await tester.pumpWidget(harness(lyrics: lyrics, positionMs: 15_100));
+    await tester.pumpAndSettle();
+    expect(highlighted(tester, '第三句'), isTrue);
+    expect(highlighted(tester, '第二句'), isFalse);
+  });
+
+  testWidgets('点完又跳到别处：钉子该松，不能一直亮着点过的那句', (tester) async {
+    final lyrics = threeLines();
+    await tester.pumpWidget(harness(lyrics: lyrics, positionMs: 5_000));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('第二句'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(harness(lyrics: lyrics, positionMs: 9_980));
+    await tester.pumpAndSettle();
+    expect(highlighted(tester, '第二句'), isTrue);
+
+    // 用进度条拖回 2 秒：离钉住的那句很远，高亮该回到位置上那一句。
+    await tester.pumpWidget(harness(lyrics: lyrics, positionMs: 2_000));
+    await tester.pumpAndSettle();
+    expect(highlighted(tester, '第一句'), isTrue);
+    expect(highlighted(tester, '第二句'), isFalse);
+  });
+
+  testWidgets('换歌（换了一份歌词）之后钉子失效：下标指的是新歌词里的句子了', (tester) async {
+    // 同一个 Future：模拟播放中的多次重建（位置在变，歌词本身没换）。
+    final first = threeLines();
+    await tester.pumpWidget(harness(lyrics: first, positionMs: 5_000));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('第二句'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(harness(lyrics: first, positionMs: 9_980));
+    await tester.pumpAndSettle();
+    expect(highlighted(tester, '第二句'), isTrue);
+
+    // 换歌：另一份歌词，位置还在 9.98 秒。下标 1 在新歌词里已经是另一句了，
+    // 钉子必须先松开，否则会亮错（乙）。
+    await tester.pumpWidget(
+      harness(
+        lyrics: Future<Lyrics?>.value(
+          fakeLyrics(<(int, String)>[(5_000, '甲'), (10_000, '乙'), (15_000, '丙')]),
+        ),
+        positionMs: 9_980,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(highlighted(tester, '甲'), isTrue, reason: '新歌该按自己的位置算');
+    expect(highlighted(tester, '乙'), isFalse);
   });
 }
