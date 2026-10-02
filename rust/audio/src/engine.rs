@@ -422,7 +422,7 @@ impl Engine {
             queue_len: self.shared.queue_len.load(Ordering::Relaxed) as u32,
             track_id: self.shared.track_id.load(Ordering::Relaxed),
             duration_ms: self.shared.duration_ms.load(Ordering::Relaxed),
-            repeat: repeat_from_u8(self.shared.repeat.load(Ordering::Relaxed)),
+            repeat: RepeatMode::from_code(self.shared.repeat.load(Ordering::Relaxed)),
             shuffle: self.shared.shuffle.load(Ordering::Relaxed),
             error: self.shared.error.lock().ok().and_then(|slot| slot.clone()),
         }
@@ -436,22 +436,6 @@ impl Drop for Engine {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
-    }
-}
-
-fn repeat_from_u8(value: u8) -> RepeatMode {
-    match value {
-        1 => RepeatMode::All,
-        2 => RepeatMode::One,
-        _ => RepeatMode::Off,
-    }
-}
-
-fn repeat_to_u8(mode: RepeatMode) -> u8 {
-    match mode {
-        RepeatMode::Off => 0,
-        RepeatMode::All => 1,
-        RepeatMode::One => 2,
     }
 }
 
@@ -745,7 +729,7 @@ fn publish(shared: &Shared, state: PlayerState, queue: &PlayQueue, session: Opti
     shared.index.store(queue.index(), Ordering::Relaxed);
     shared
         .repeat
-        .store(repeat_to_u8(queue.repeat()), Ordering::Relaxed);
+        .store(queue.repeat().code(), Ordering::Relaxed);
     shared.shuffle.store(queue.shuffle(), Ordering::Relaxed);
     match session {
         Some(current) => {

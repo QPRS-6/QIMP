@@ -41,6 +41,35 @@ pub enum RepeatMode {
     One,
 }
 
+impl RepeatMode {
+    /// 编码：`0` 关 / `1` 列表循环 / `2` 单曲循环。
+    ///
+    /// 这个编码是**跨层约定**，几处都靠它对齐，要改就得一起改：
+    /// - 通知栏 / 桌面小部件的按钮（`playback_bridge.rs` 的 `REPEAT_*` 常量，
+    ///   以及 Kotlin 侧的 `PlaybackBridge.REPEAT_*`）
+    /// - 引擎快照里那个 `AtomicU8`
+    /// - 退出应用时落库的那份设置（`musicplayer-core` 的 `meta` 表）
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::All => 1,
+            Self::One => 2,
+        }
+    }
+
+    /// 解码；认不出来的值一律当「关」。
+    ///
+    /// 老库、手改过的库、以及将来多加一档模式之后的旧客户端都会走到这条兜底上——
+    /// 「循环模式认不出来」绝不该让播放起不来。
+    pub fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::All,
+            2 => Self::One,
+            _ => Self::Off,
+        }
+    }
+}
+
 /// 随机播放用的小随机数发生器（xorshift64*）。
 ///
 /// 不为这点需求引入 `rand`：只需要「从候选里挑一个」，均匀性绰绰有余、零依赖，
@@ -296,6 +325,19 @@ impl PlayQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 循环模式的编码是**跨层约定**：0 关 / 1 列表 / 2 单曲，认不出来的一律当关。
+    #[test]
+    fn repeat_mode_codes_round_trip() {
+        assert_eq!(RepeatMode::Off.code(), 0);
+        assert_eq!(RepeatMode::All.code(), 1);
+        assert_eq!(RepeatMode::One.code(), 2);
+        for mode in [RepeatMode::Off, RepeatMode::All, RepeatMode::One] {
+            assert_eq!(RepeatMode::from_code(mode.code()), mode, "编解码要能对上");
+        }
+        // 老库 / 手改过的库 / 以后多加一档模式之后的旧客户端：认不出来不能把播放搞崩。
+        assert_eq!(RepeatMode::from_code(9), RepeatMode::Off);
+    }
 
     fn queue_of(names: &[&str]) -> PlayQueue {
         let items = names

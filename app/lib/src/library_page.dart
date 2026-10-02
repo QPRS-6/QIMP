@@ -193,8 +193,8 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
 
   /// 从系统授权页返回时触发：权限可能刚被授予，必须复查一次。
   ///
-  /// 顺带在退到后台时把进度落库：系统随时可能回收进程，不能只指望 `dispose`
-  /// ——它不保证会被调用。
+  /// 顺带在退到后台时把进度与播放设置落库：系统随时可能回收进程，不能只指望
+  /// `dispose` ——它不保证会被调用。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _hasAccess == false) {
@@ -203,6 +203,7 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _saveProgress();
+      _savePlaybackMode();
     }
   }
 
@@ -221,6 +222,8 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
       _reload();
       // 接着上次的听：装进引擎但不播放，用户点一下才出声。
       _restoreLastPlayed();
+      // 上次的随机 / 循环：退出时记下的，启动时照旧装回引擎。
+      _restorePlaybackMode();
       // 播放进度由轮询快照提供：500ms 一次，肉眼看进度条足够顺滑。
       _ticker ??= Timer.periodic(const Duration(milliseconds: 500), (_) {
         _refreshPlayer();
@@ -398,6 +401,45 @@ class _LibraryPageState extends State<LibraryPage> with WidgetsBindingObserver {
               _lookupTrack(plan.entries[plan.index].id)?.durationMs ?? 0,
         ),
       );
+    } catch (_) {
+      // 同上：装不上就当没这回事。
+    }
+  }
+
+  /// 把当前的随机 / 循环设置落库（退到后台时调一次）。
+  ///
+  /// 只认播放快照：没有快照（引擎还没起来、初始化失败）就**什么都不写**——
+  /// 拿一个「默认值」写进去，会把用户上次记下的那套盖掉，下次启动随机播放就
+  /// 莫名其妙被关了。这个判断在 `ProgressApi.modeToSave` 里，那边有单测。
+  void _savePlaybackMode() {
+    final mode = ProgressApi.modeToSave(_player.value);
+    if (mode == null) return;
+    try {
+      widget.progressApi.saveMode(shuffle: mode.shuffle, repeat: mode.repeat);
+    } catch (_) {
+      // 写不进去就等下一次退出；为一次 SQLite 抖动弹提示只会打扰用户。
+    }
+  }
+
+  /// 把上次的随机 / 循环设置装回引擎（退出时由 [_savePlaybackMode] 落库）。
+  ///
+  /// 放在 [`_restoreLastPlayed`] **之后**：先把队装好，再设「怎么放」——
+  /// `setShuffle` 会重开一轮随机播放并把当前这首记为「本轮已放过」，
+  /// 队列还没装好的话，记下的就不是那一首了。
+  ///
+  /// 它只改设置、不出声：装完仍然停在暂停上，与「接着上次的听」一致。
+  void _restorePlaybackMode() {
+    final PlaybackMode? saved;
+    try {
+      saved = widget.progressApi.lastMode();
+    } catch (_) {
+      return; // 读不到就当默认（随机关、不循环）：锦上添花，不该拖累首屏
+    }
+    if (saved == null) return;
+
+    try {
+      playerSetShuffle(shuffle: saved.shuffle);
+      playerSetRepeat(mode: saved.repeat);
     } catch (_) {
       // 同上：装不上就当没这回事。
     }

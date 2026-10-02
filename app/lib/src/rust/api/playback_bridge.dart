@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `code_of`, `current_track`, `next_repeat`, `run`, `track_by_id`
+// These functions are ignored because they are not marked as `pub`: `current_track`, `next_repeat`, `run`, `track_by_id`
 
 /// 引擎当前状态；引擎没起来时按“已停止”处理（通知栏据此收掉自己）。
 Future<int> stateCode() =>

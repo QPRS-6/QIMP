@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use flutter_rust_bridge::frb;
 
+use musicplayer_audio::RepeatMode;
 use musicplayer_core::db::Scope;
 use musicplayer_core::{scan_roots, Db, ScanOptions};
 
@@ -459,6 +460,38 @@ pub fn save_playback_position(track_id: i64, position_ms: u64) -> Result<(), Str
         }
         Ok(())
     })
+}
+
+/// 记下随机播放与循环模式（界面在退到后台时写一次，下次启动照旧）。
+///
+/// 收的是**枚举**而不是编码：编码是内部约定（见 `RepeatMode::code`），
+/// 让调用方去拼 0/1/2 只会在某一层悄悄写错。
+#[frb(sync)]
+pub fn save_playback_mode(shuffle: bool, repeat: RepeatMode) -> Result<(), String> {
+    with_db(|db| {
+        db.save_playback_mode(shuffle, repeat.code())
+            .map_err(|e| e.to_string())
+    })
+}
+
+/// 上次的「随机播放 / 循环模式」；从没记过时为 `null`。
+#[frb(sync)]
+pub fn playback_mode() -> Result<Option<PlaybackMode>, String> {
+    with_db(|db| {
+        Ok(db
+            .playback_mode()
+            .map_err(|e| e.to_string())?
+            .map(|(shuffle, repeat_code)| PlaybackMode {
+                shuffle,
+                repeat: RepeatMode::from_code(repeat_code),
+            }))
+    })
+}
+
+/// 上次的随机播放 / 循环模式（给 Dart 的形状：循环模式是枚举，不是编码）。
+pub struct PlaybackMode {
+    pub shuffle: bool,
+    pub repeat: RepeatMode,
 }
 
 /// 解码器已经知道、但曲库里还是 0 的那个时长；没得补时返回 `None`。
@@ -922,6 +955,27 @@ mod tests {
         );
         assert_eq!(saved.index, 0, "它从第 2 个挪到了第 1 个");
         assert_eq!(saved.position_ms, 7_777, "进度跟着人走");
+
+        // 「退出时记下随机 / 循环」的契约：写进去 → 读回来是同一套；从没记过时是 None
+        // （由界面按默认值来，而不是从库里编一个出来）。
+        assert!(
+            playback_mode().expect("读设置").is_none(),
+            "从没记过时不该编一份默认值出来"
+        );
+        save_playback_mode(true, RepeatMode::One).expect("记设置");
+        let mode = playback_mode()
+            .expect("读设置")
+            .expect("应记得刚写的那一套");
+        assert!(mode.shuffle, "随机播放该记下来");
+        assert_eq!(mode.repeat, RepeatMode::One, "循环模式该记下来");
+
+        // 再写一次（关随机、列表循环）：两项都得跟着变，不能只改一半。
+        save_playback_mode(false, RepeatMode::All).expect("再记一次");
+        let mode = playback_mode()
+            .expect("读设置")
+            .expect("应记得刚写的那一套");
+        assert!(!mode.shuffle);
+        assert_eq!(mode.repeat, RepeatMode::All);
 
         // 「从储存中删除」的契约：真的删掉文件，并把它从索引里清掉。
         // 另写一首，免得和上面那条“文件先没了再重扫”的用例纠缠在一起。

@@ -7,6 +7,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:musicplayer/src/progress_api.dart';
 import 'package:musicplayer/src/rust/api/library.dart' as rust;
+import 'package:musicplayer/src/rust/api/player.dart' show RepeatMode;
+
+import 'fixtures.dart';
 
 void main() {
   int start({required int positionMs, required int durationMs}) =>
@@ -33,6 +36,22 @@ void main() {
 
   test('时长未知：只能信进度本身', () {
     expect(start(positionMs: 42000, durationMs: 0), 42000);
+  });
+
+  test('退出时记下的随机 / 循环：只认播放快照，没有快照就不许写', () {
+    // 引擎还没起来（首屏、初始化失败）时写一个「默认值」进去，会把用户上次记下的
+    // 那套盖掉——下次启动随机播放就莫名其妙被关了，所以这种情况宁可什么都不写。
+    expect(ProgressApi.modeToSave(null), isNull);
+
+    final saved = ProgressApi.modeToSave(
+      fakeSnapshot(shuffle: true, repeat: RepeatMode.one),
+    )!;
+    expect(saved.shuffle, isTrue);
+    expect(saved.repeat, RepeatMode.one);
+
+    final off = ProgressApi.modeToSave(fakeSnapshot())!;
+    expect(off.shuffle, isFalse, reason: '默认是关的，也要如实记下来');
+    expect(off.repeat, RepeatMode.off);
   });
 
   /// 假队列快照：ids 逐个对应 `/m/<id>.mp3`。

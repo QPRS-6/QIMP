@@ -7,6 +7,8 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+import 'player.dart';
+
 // These functions are ignored because they are not marked as `pub`: `default_playlist_name`, `engine_duration_ms`, `order_of`, `track_or_none`, `with_db`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `SortOrder`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
@@ -222,6 +224,20 @@ void savePlaybackPosition({required int trackId, required int positionMs}) =>
       positionMs: positionMs,
     );
 
+/// 记下随机播放与循环模式（界面在退到后台时写一次，下次启动照旧）。
+///
+/// 收的是**枚举**而不是编码：编码是内部约定（见 `RepeatMode::code`），
+/// 让调用方去拼 0/1/2 只会在某一层悄悄写错。
+void savePlaybackMode({required bool shuffle, required RepeatMode repeat}) =>
+    RustLib.instance.api.crateApiLibrarySavePlaybackMode(
+      shuffle: shuffle,
+      repeat: repeat,
+    );
+
+/// 上次的「随机播放 / 循环模式」；从没记过时为 `null`。
+PlaybackMode? playbackMode() =>
+    RustLib.instance.api.crateApiLibraryPlaybackMode();
+
 /// [`musicplayer_core::Album`] 的镜像。
 class Album {
   final String name;
@@ -385,6 +401,25 @@ class Lyrics {
           album == other.album &&
           offsetMs == other.offsetMs &&
           synced == other.synced;
+}
+
+/// 上次的随机播放 / 循环模式（给 Dart 的形状：循环模式是枚举，不是编码）。
+class PlaybackMode {
+  final bool shuffle;
+  final RepeatMode repeat;
+
+  const PlaybackMode({required this.shuffle, required this.repeat});
+
+  @override
+  int get hashCode => shuffle.hashCode ^ repeat.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PlaybackMode &&
+          runtimeType == other.runtimeType &&
+          shuffle == other.shuffle &&
+          repeat == other.repeat;
 }
 
 /// [`musicplayer_core::Playlist`] 的镜像。

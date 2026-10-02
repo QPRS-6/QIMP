@@ -18,6 +18,27 @@ class ProgressApi {
   /// 上次的**整份**播放队列；从没记过队列时为 `null`。
   ResumeQueue? lastQueue() => resumeQueue();
 
+  /// 上次的**随机播放 / 循环模式**；从没记过时为 `null`。
+  ///
+  /// 与队列分开存：这两项是「怎么放」而不是「放什么」，用户在设置里改完就退出、
+  /// 队列却没动过的情况很常见，各记各的最省事。
+  PlaybackMode? lastMode() => playbackMode();
+
+  /// 把当前的随机 / 循环设置写回曲库。
+  void saveMode({required bool shuffle, required RepeatMode repeat}) =>
+      savePlaybackMode(shuffle: shuffle, repeat: repeat);
+
+  /// 退出时要落库的那一份设置；**还没有播放快照时返回 `null`**。
+  ///
+  /// 没有快照就说明引擎还没起来（首屏、初始化失败），这时候去写一个「默认值」，
+  /// 只会把用户上次记下的那套盖掉——下次启动随机播放就莫名其妙关了。
+  static ({bool shuffle, RepeatMode repeat})? modeToSave(
+    PlayerSnapshot? snapshot,
+  ) {
+    if (snapshot == null) return null;
+    return (shuffle: snapshot.shuffle, repeat: snapshot.repeat);
+  }
+
   /// 把整份队列与当前项写回曲库（队列或当前项变了就该写一次）。
   void saveQueue(List<QueueEntry> entries, int index) => savePlayQueue(
     trackIds: [for (final entry in entries) entry.id],

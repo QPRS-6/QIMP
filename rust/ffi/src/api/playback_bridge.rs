@@ -86,7 +86,7 @@ pub fn shuffle_on() -> bool {
 
 /// 当前循环模式的编码。
 pub fn repeat_code() -> i32 {
-    player::snapshot_or_none().map_or(REPEAT_OFF, |snapshot| code_of(snapshot.repeat))
+    player::snapshot_or_none().map_or(REPEAT_OFF, |snapshot| i32::from(snapshot.repeat.code()))
 }
 
 /// 切换随机播放，返回切换**后**的状态（引擎没起来时是 `false`）。
@@ -108,7 +108,7 @@ pub fn cycle_repeat() -> i32 {
         return REPEAT_OFF;
     };
     run(|engine| engine.set_repeat(next));
-    code_of(next)
+    i32::from(next.code())
 }
 
 /// 循环模式的下一档。
@@ -120,15 +120,6 @@ fn next_repeat(current: RepeatMode) -> RepeatMode {
         RepeatMode::Off => RepeatMode::All,
         RepeatMode::All => RepeatMode::One,
         RepeatMode::One => RepeatMode::Off,
-    }
-}
-
-/// 循环模式 → 编码。
-fn code_of(mode: RepeatMode) -> i32 {
-    match mode {
-        RepeatMode::Off => REPEAT_OFF,
-        RepeatMode::All => REPEAT_ALL,
-        RepeatMode::One => REPEAT_ONE,
     }
 }
 
@@ -239,9 +230,9 @@ mod tests {
 
     #[test]
     fn repeat_codes_match_the_kotlin_constants() {
-        assert_eq!(code_of(RepeatMode::Off), REPEAT_OFF);
-        assert_eq!(code_of(RepeatMode::All), REPEAT_ALL);
-        assert_eq!(code_of(RepeatMode::One), REPEAT_ONE);
+        assert_eq!(i32::from(RepeatMode::Off.code()), REPEAT_OFF);
+        assert_eq!(i32::from(RepeatMode::All.code()), REPEAT_ALL);
+        assert_eq!(i32::from(RepeatMode::One.code()), REPEAT_ONE);
     }
 
     /// 没引擎时操作返回失败，而不是 panic。

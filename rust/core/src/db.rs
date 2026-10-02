@@ -944,6 +944,59 @@ impl Db {
         }))
     }
 
+    /// 记下「随机播放 / 循环模式」这两项设置（退出应用时写一次，下次启动照旧）。
+    ///
+    /// 存 `meta` 而不是新表：它们是**单值设置**，没有「一行对应一首歌」这种概念，
+    /// 为两张只存一行一列的表再写一套增删改查反而更难读。
+    ///
+    /// 两条在同一个事务里写：它们总是一起变，分开写有可能只落下半份。
+    pub fn save_playback_mode(&self, shuffle: bool, repeat_code: u8) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO meta(key, value) VALUES(?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params!["play_shuffle", if shuffle { "1" } else { "0" }],
+        )?;
+        tx.execute(
+            "INSERT INTO meta(key, value) VALUES(?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params!["play_repeat", repeat_code.to_string()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 上次的「随机播放 / 循环模式」；从没记过时返回 `None`（调用方按默认值来）。
+    ///
+    /// **两项都记过才算数**：只落了半份说明这份记录是坏的（手改过的库、写了一半），
+    /// 与其猜一半，不如整体当没记过——反正这两项用户随时能改。
+    ///
+    /// `repeat_code` 是播放层的编码（0 关 / 1 列表 / 2 单曲），定义在
+    /// `musicplayer_audio::RepeatMode::code()`：core 这一层不认识播放层的类型，
+    /// 存一个编码就够，为它引入依赖不值得。
+    pub fn playback_mode(&self) -> Result<Option<(bool, u8)>> {
+        let saved = self.conn.query_row(
+            "SELECT (SELECT value FROM meta WHERE key = 'play_shuffle'),
+                    (SELECT value FROM meta WHERE key = 'play_repeat')",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        )?;
+        match saved {
+            (Some(shuffle), Some(repeat)) => Ok(Some((
+                shuffle == "1",
+                // 认不出来的值交给播放层兜底（它那边 `from_code` 会当成「关」），
+                // 这里只负责把字符串变成数字。
+                repeat.parse::<u8>().unwrap_or(0),
+            ))),
+            _ => Ok(None),
+        }
+    }
+
     pub fn play_state(&self, track: TrackId) -> Result<Option<PlayState>> {
         Ok(self
             .conn
@@ -1110,6 +1163,35 @@ fn opt_u32(value: Option<i64>) -> Option<u32> {
 mod tests {
     use super::*;
     use crate::models::{SortKey, SortOrder};
+
+    /// 退出时记下的随机 / 循环设置，下次启动要能原样读回来。
+    #[test]
+    fn playback_mode_round_trip() {
+        let db = Db::open_in_memory().expect("内存库");
+        assert_eq!(db.playback_mode().expect("读设置"), None, "从没记过");
+
+        db.save_playback_mode(true, 2).expect("记设置");
+        assert_eq!(db.playback_mode().expect("读设置"), Some((true, 2)));
+
+        db.save_playback_mode(false, 1).expect("再记一次");
+        assert_eq!(db.playback_mode().expect("读设置"), Some((false, 1)));
+    }
+
+    /// 只落了半份（写了一半、手改过的库）时整体当没记过。
+    ///
+    /// 两项是一起写进去的，缺一条就不是我们写的那份记录：与其猜一半，
+    /// 不如整体回到默认——反正这两项用户随时能改。
+    #[test]
+    fn incomplete_playback_mode_is_ignored() {
+        let db = Db::open_in_memory().expect("内存库");
+        db.conn
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('play_shuffle', '1')",
+                [],
+            )
+            .expect("手写半份");
+        assert_eq!(db.playback_mode().expect("读设置"), None);
+    }
 
     fn sample(path: &str, title: &str, artist: &str, album: &str, duration_ms: u64) -> Track {
         Track {
