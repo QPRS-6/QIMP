@@ -77,6 +77,31 @@ adb install -r app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 换装另一种产物直接 `-r` 覆盖即可（签名相同，曲库与设置都保留）；三种产物文件名不同，
 互不覆盖，可以一直放在同一个目录里。
 
+## 应用签名（release）
+
+release 包现在用一把自己的钥匙签名：`~/.android-keystores/qimp-release.jks`
+（RSA 4096、有效期 10000 天、别名 `qimp`），证书：
+
+```
+DN       CN=QIMP, O=QIMP, C=CN
+SHA-256  86:DD:5A:6B:92:B1:70:19:B1:26:01:6D:30:BC:E1:59:12:A9:11:1E:EF:D4:1D:99:D1:E2:AF:23:A4:44:A0:02
+```
+
+- 路径与口令写在 `app/android/key.properties`，那份文件**不进版本库**
+  （`app/android/.gitignore` 已屏蔽 `key.properties` 与 `**/*.jks`）；
+  keystore 特意放在仓库**外面**——`git clean -xfd` 会把忽略文件一起删掉，
+  放仓库里早晚有一天会被误删。
+- 没有 `key.properties` 时（别人 clone 下来、CI）**自动退回 debug 签名**，
+  照样能 `flutter build apk`，只是那样签出来的包不能覆盖安装你签名的那个。
+- 核对某个包是谁签的：
+  ```bash
+  "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs app-release.apk
+  ```
+- **钥匙丢了就只能卸载重装**：Android 按签名认应用，签名一变覆盖安装会被拒
+  （`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），只能先卸载——那会一并清掉曲库索引与
+  设置（音乐文件本身在储存里，不受影响）。把 `key.properties` 和 keystore
+  一起备份到别处（换电脑、重装系统前尤其要）。
+
 ## 权限说明（重要）
 
 - **Android 11+ 必须授予“所有文件访问”**（`MANAGE_EXTERNAL_STORAGE`）。原因：核心扫描器基于
