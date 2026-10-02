@@ -13,7 +13,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use ringbuf::traits::Producer;
-use ringbuf::HeapProd;
+use ringbuf::{HeapCons, HeapProd};
 
 use crate::decoder::AudioDecoder;
 use crate::error::{AudioError, Result};
@@ -114,19 +114,37 @@ impl Session {
     }
 
     /// 跳转：解码器换位置 + 重建音频流（环形缓冲里的旧数据直接丢弃最干净）。
-    fn seek(&mut self, position_ms: u64, output: &AudioOutputHandle) -> Result<()> {
+    ///
+    /// `playing` 是**引擎此刻的状态**，必须原样传到设备侧（理由见 [`open_output`]）。
+    /// 少了这一步，「暂停中调歌词」会把设备留在「在跑」上，而引擎以为自己还在暂停；
+    /// 之后用户按播放时 `resume()` 就是对一条已经在跑的流再 `start()` 一次，
+    /// 那首歌从此播不出来（快照里 `state = Failed`，界面上是「播不了：…」）。
+    fn seek(&mut self, position_ms: u64, playing: bool, output: &AudioOutputHandle) -> Result<()> {
         let actual = self.decoder.seek(position_ms)?;
 
         let (producer, consumer) = ring_buffer(self.spec);
-        let played = {
-            let mut guard = lock_output(output)?;
-            guard.start(self.spec, consumer)?;
-            guard.played_frames()
-        };
-
+        // 先把新流接上再换自身状态：接不上（设备报错）时旧状态原样留着，调用方好收尾。
+        self.attach(consumer, actual, playing, output)?;
         self.producer = producer;
+        Ok(())
+    }
+
+    /// 把音频通路接上：`consumer` 交给音频线程，位置基准挪到 `base_ms`。
+    ///
+    /// 只有 `producer`/`consumer` 是**新的一对**时才该调用它——老缓冲里的数据必须整体
+    /// 丢弃，接着用会让声音与位置对不上。新流开起来之后是继续跑还是按回暂停，由
+    /// `playing` 决定（见 [`open_output`]）。
+    fn attach(
+        &mut self,
+        consumer: HeapCons<f32>,
+        base_ms: u64,
+        playing: bool,
+        output: &AudioOutputHandle,
+    ) -> Result<()> {
+        let played = open_output(self.spec, consumer, playing, output)?;
+
         self.played = played;
-        self.base_ms = actual;
+        self.base_ms = base_ms;
         self.base_frames = 0;
         self.mapped.clear();
         self.pending = 0;
@@ -428,6 +446,32 @@ fn repeat_to_u8(mode: RepeatMode) -> u8 {
     }
 }
 
+/// 开一条输出流，并把它设成与引擎状态一致的「跑 / 停」；返回设备那边的已播帧计数。
+///
+/// 为什么要多这一步：`AudioOutput::start` 开的流**一定**是跑着的（设备侧接口就是如此，
+/// 它总是先关掉旧流再开一条新的，没有「开好但先别动」这一档）。所以引擎处于暂停时，
+/// 开完流必须紧跟一次 `pause()`，否则会留下「设备在跑、引擎以为在暂停」的两套状态。
+/// 之后的 `resume()` 等于对一条已经在跑的流再 `start()` 一次，Oboe 那边要么直接报
+/// 状态错、要么等状态变化等到超时——那首歌就再也播不出来（用户看到的是「播不了：…」）。
+///
+/// 暂停不下去就把流整个关掉：宁可下次重新开一条，也别把这条状态错位的流留给引擎。
+fn open_output(
+    spec: OutputSpec,
+    consumer: HeapCons<f32>,
+    playing: bool,
+    output: &AudioOutputHandle,
+) -> Result<Arc<AtomicU64>> {
+    let mut guard = lock_output(output)?;
+    guard.start(spec, consumer)?;
+    if !playing {
+        if let Err(err) = guard.pause() {
+            guard.stop();
+            return Err(err);
+        }
+    }
+    Ok(guard.played_frames())
+}
+
 /// 取输出设备锁。锁中毒说明别处 panic 过，按设备错误上报而不是再 panic 一次。
 fn lock_output(
     output: &AudioOutputHandle,
@@ -443,9 +487,13 @@ fn display_name(item: &QueueItem) -> &str {
 }
 
 /// 建立一次播放会话：打开解码器 → 按源格式开流。
+///
+/// `playing` 决定这次会话是**开始播放**还是**装好但先不出声**（「继续播放」用后者）：
+/// 暂停状态的会话，设备侧那一条流也会被按在暂停上，两边状态从第一刻就是一致的。
 fn start_session(
     item: &QueueItem,
     position_ms: u64,
+    playing: bool,
     output: &AudioOutputHandle,
 ) -> Result<Session> {
     let decoder = AudioDecoder::open(&item.path)?;
@@ -457,16 +505,11 @@ fn start_session(
     };
 
     let (producer, consumer) = ring_buffer(spec);
-    let played = {
-        let mut guard = lock_output(output)?;
-        guard.start(spec, consumer)?;
-        guard.played_frames()
-    };
-
     let mut session = Session {
         decoder,
         producer,
-        played,
+        // 占位：真值来自设备侧，由下面的 `seek` / `attach` 换掉。
+        played: Arc::new(AtomicU64::new(0)),
         spec,
         src_channels: usize::from(info.channels.max(1)),
         mapped: Vec::new(),
@@ -479,7 +522,10 @@ fn start_session(
     };
 
     if position_ms > 0 {
-        session.seek(position_ms, output)?;
+        // 跳转要丢弃整段缓冲，`seek` 会另建一对（上面这对用不上）。
+        session.seek(position_ms, playing, output)?;
+    } else {
+        session.attach(consumer, 0, playing, output)?;
     }
     Ok(session)
 }
@@ -500,7 +546,7 @@ fn play_item(
     shared: &Shared,
     output: &AudioOutputHandle,
 ) {
-    match start_session(item, 0, output) {
+    match start_session(item, 0, true, output) {
         Ok(new_session) => {
             *session = Some(new_session);
             *state = PlayerState::Playing;
@@ -514,7 +560,7 @@ fn play_item(
     }
 }
 
-/// 装载指定单曲但不播放：建会话、定位到 `position_ms`，然后把输出按在暂停上。
+/// 装载指定单曲但不播放：建会话、定位到 `position_ms`，设备侧一并按在暂停上。
 ///
 /// 返回装载后的状态（成功就是 `Paused`）。失败的原因写进共享快照，与 [`play_item`] 一致。
 fn prepare_item(
@@ -524,17 +570,10 @@ fn prepare_item(
     shared: &Shared,
     output: &AudioOutputHandle,
 ) -> PlayerState {
-    match start_session(item, position_ms, output) {
+    match start_session(item, position_ms, false, output) {
         Ok(loaded) => {
             *session = Some(loaded);
             shared.clear_error();
-            // 流已经开起来了：那一刻环形缓冲还是空的（没人往里写），
-            // 但顺手按下暂停更稳妥——也让设备侧的状态与快照一致。
-            if let Err(err) = lock_output(output).and_then(|mut guard| guard.pause()) {
-                shared.fail(err.to_string());
-                stop_playback(session, output);
-                return PlayerState::Failed;
-            }
             PlayerState::Paused
         }
         Err(err) => {
@@ -629,7 +668,8 @@ fn handle_command(
             None => {
                 // 已经在第一首：回到开头重播，符合大多数播放器的习惯。
                 if let Some(current) = session.as_mut() {
-                    if let Err(err) = current.seek(0, output) {
+                    let playing = *state == PlayerState::Playing;
+                    if let Err(err) = current.seek(0, playing, output) {
                         shared.fail(err.to_string());
                         *state = PlayerState::Failed;
                     }
@@ -638,7 +678,10 @@ fn handle_command(
         },
         Command::Seek(position_ms) => {
             if let Some(current) = session.as_mut() {
-                if let Err(err) = current.seek(position_ms, output) {
+                // 「设备该不该跑」只认引擎此刻的状态：暂停中调歌词（点某一句跳过去）
+                // 之后设备必须仍然停在暂停上，否则点播放会对一条已经在跑的流再开一次。
+                let playing = *state == PlayerState::Playing;
+                if let Err(err) = current.seek(position_ms, playing, output) {
                     shared.fail(err.to_string());
                     *state = PlayerState::Failed;
                 }
@@ -815,6 +858,22 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         false
+    }
+
+    /// 设备侧是不是被按在暂停上。
+    ///
+    /// 这条不变量正是本文件那两个「暂停中跳转」用例要盯的：引擎暂停时设备也必须停着。
+    /// 设备在跑而引擎以为在暂停，用户点播放时 `resume()` 就成了对一条已经在跑的流再
+    /// `start()` 一次——真机上那首歌就再也播不出来（`NullOutput` 会如实记账，
+    /// 但它的 `resume` 不会像 Oboe 那样报错，所以这里直接查状态）。
+    fn device_paused(output: &AudioOutputHandle) -> bool {
+        let Ok(mut guard) = output.lock() else {
+            return false;
+        };
+        match guard.as_any_mut().downcast_mut::<NullOutput>() {
+            Some(null) => null.is_paused(),
+            None => false,
+        }
     }
 
     /// 造一首真实的临时音频，返回入队项。
@@ -1062,6 +1121,131 @@ mod tests {
         assert!(
             engine.snapshot().position_ms < 6_000,
             "跳转不应越界到目标之后太多：{:?}",
+            engine.snapshot()
+        );
+    }
+
+    /// 暂停中调歌词（点某一句跳过去）：设备必须仍然停在暂停上，之后点播放要能接着响。
+    ///
+    /// 回归用例。跳转一定会重建输出流，而设备侧新开出来的流**就是跑着的**；少了
+    /// 「引擎在暂停就把新流按回去」这一步，就变成「设备在跑、引擎以为在暂停」。
+    /// 真机上点播放会对一条已经在跑的流再 `start()` 一次：Oboe 报状态错，那首歌从此
+    /// 播不出来（界面上是「播不了：…」）。`NullOutput` 不会报错，但它如实记账，
+    /// 所以这里直接查设备状态。
+    #[test]
+    fn seek_while_paused_keeps_device_paused_and_still_plays() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+        engine
+            .replace_queue(vec![wav_item(temp.path(), "long.wav", 30, 11)], 0, true)
+            .expect("播放");
+
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > 0),
+            "进度应开始增长"
+        );
+
+        engine.pause().expect("暂停");
+        assert!(
+            pump_until(&output, 2_000, || engine.snapshot().state
+                == PlayerState::Paused),
+            "应进入暂停状态：{:?}",
+            engine.snapshot()
+        );
+        assert!(device_paused(&output), "暂停之后设备也该停着");
+
+        // 调歌词：跳到 10 秒那一句。
+        engine.seek(10_000).expect("跳转");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms >= 9_500),
+            "跳转后位置应落在 10s 附近：{:?}",
+            engine.snapshot()
+        );
+        assert!(
+            device_paused(&output),
+            "暂停中的跳转不能把设备流唤醒：之后点播放会对一条已经在跑的流再开一次"
+        );
+
+        // 暂停着就不该自己往前走（跳转完也一样）。
+        let frozen = engine.snapshot().position_ms;
+        for _ in 0..20 {
+            pump(&output, 512);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            engine.snapshot().position_ms,
+            frozen,
+            "暂停期间跳转之后位置也不该自己增长"
+        );
+
+        // 点播放：从跳转到的位置接着响，而且不能记下错误。
+        engine.play().expect("播放");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().state
+                == PlayerState::Playing),
+            "点了播放就该响：{:?}",
+            engine.snapshot()
+        );
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > frozen),
+            "应从跳转到的位置继续往前走：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(engine.snapshot().error, None, "整个过程都不该有错误");
+    }
+
+    /// 暂停中在**第一首**上按「上一曲」：引擎回到开头重播，这次跳转同样不能把设备唤醒。
+    #[test]
+    fn rewind_to_start_while_paused_keeps_device_paused() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+        engine
+            .replace_queue(vec![wav_item(temp.path(), "long.wav", 30, 13)], 0, true)
+            .expect("播放");
+
+        // 先跳到 8 秒，这样「回到开头」在快照里看得见。
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > 0),
+            "进度应开始增长"
+        );
+        engine.seek(8_000).expect("跳转");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms >= 7_500),
+            "跳转后位置应在 8s 附近：{:?}",
+            engine.snapshot()
+        );
+
+        engine.pause().expect("暂停");
+        assert!(
+            pump_until(&output, 2_000, || engine.snapshot().state
+                == PlayerState::Paused),
+            "应进入暂停状态：{:?}",
+            engine.snapshot()
+        );
+
+        engine.previous().expect("上一曲");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms < 1_000),
+            "第一首上按「上一曲」应回到开头：{:?}",
+            engine.snapshot()
+        );
+        assert!(
+            device_paused(&output),
+            "回到开头也是一次跳转，同样不能把设备流唤醒"
+        );
+
+        engine.play().expect("播放");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().state
+                == PlayerState::Playing),
+            "点了播放就该响：{:?}",
+            engine.snapshot()
+        );
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > 0),
+            "应从头开始往前走：{:?}",
             engine.snapshot()
         );
     }
