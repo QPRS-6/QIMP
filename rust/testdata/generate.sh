@@ -9,5 +9,13 @@ ffmpeg -hide_banner -v error -f lavfi -i "sine=frequency=440:duration=1" \
   -ac 1 -ar 16000 -c:a libvorbis -q:a 1 -y testdata/ogg_vorbis.ogg
 ffmpeg -hide_banner -v error -f lavfi -i "sine=frequency=440:duration=1" \
   -ac 1 -ar 16000 -c:a libopus -b:a 24k -y testdata/ogg_opus.ogg
+# 「没下完」的 mp3：头部（含 Xing 时长表）完整、数据只留一半。
+# 用户库里这类文件很常见（下载中断、拷贝被打断、从坏卡里拷出来的）：
+# 时长显示 4 秒，实际只有 2 秒的音频数据。
+ffmpeg -hide_banner -v error -f lavfi -i "sine=frequency=440:duration=4" \
+  -ac 1 -ar 16000 -c:a libmp3lame -b:a 32k -y testdata/truncated.mp3
+size=$(wc -c < testdata/truncated.mp3)
+head -c "$((size / 2))" testdata/truncated.mp3 > testdata/truncated.mp3.tmp
+mv testdata/truncated.mp3.tmp testdata/truncated.mp3
 ls -la testdata/
-file testdata/*.ogg
+file testdata/*.ogg testdata/*.mp3

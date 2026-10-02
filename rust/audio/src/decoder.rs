@@ -11,7 +11,7 @@ use symphonia::core::audio::sample::Sample;
 use symphonia::core::codecs::audio::AudioDecoder as SymphoniaDecoder;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::codecs::registry::CodecRegistry;
-use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
@@ -72,6 +72,12 @@ fn track_duration_ms(track: &Track) -> u64 {
 fn map_error(err: SymphoniaError) -> AudioError {
     match err {
         SymphoniaError::IoError(err) => AudioError::Io(err),
+        // 「目标超出容器声明的范围」单独认出来：它和「文件里的数据比声明的短」是同一类
+        // 情况（文件不完整），播放层要把它当作「跳过头了」而不是播放错误，
+        // 见 `engine.rs` 的 `is_past_end`。
+        SymphoniaError::SeekError(SeekErrorKind::OutOfRange) => {
+            AudioError::SeekOutOfRange("请求的位置超出容器声明的范围".to_string())
+        }
         SymphoniaError::Unsupported(reason) => AudioError::UnsupportedFormat(reason.to_string()),
         other => AudioError::Decode(other.to_string()),
     }

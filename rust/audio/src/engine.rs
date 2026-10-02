@@ -153,6 +153,15 @@ impl Session {
         Ok(())
     }
 
+    /// 把这一首标记成「已经到头了」。
+    ///
+    /// 跳转落到文件尾之后时用（见 [`is_past_end`]）：解码器那边给不出这个位置了，
+    /// 但环形缓冲里还剩一小段没播完——按自然播完那条路走：先把它播完，
+    /// 再让队列往下走。用户把进度条拖到最后，要的也正是这个。
+    fn finish(&mut self) {
+        self.source_done = true;
+    }
+
     /// 当前播放位置（毫秒）：以音频线程真正播出多少帧为准。
     fn position_ms(&self) -> u64 {
         let played = self.played.load(Ordering::Relaxed);
@@ -472,6 +481,28 @@ fn open_output(
     Ok(guard.played_frames())
 }
 
+/// 这个跳转失败算不算「跳过头了」——目标落在文件里**真正有数据**的那一段之后。
+///
+/// 两种来源都是同一件事：**文件不完整**（下载没下完、拷贝被打断、从坏卡里拷出来的，
+/// 手机上很常见）。文件头里的时长与索引是全的，后面那段数据却没有：
+///
+/// - `UnexpectedEof`：目标还在容器声明的时长之内，但文件里已经没有那段数据了
+///   （索引指到的字节位置越过了文件尾）。真机上用户看到的是
+///   「播不了：文件系统错误: unexpected end of file」。
+/// - [`AudioError::SeekOutOfRange`]：目标连容器声明的时长都超了（标签里的时长比容器
+///   还长时就是这样）。
+///
+/// 这两种都不该让这一首「播不了」：把进度条拖到最后的意思就是「这首到头了」，
+/// 该做的是当作它放完了、让队列继续往下走。真该报错的是别的失败（解码器坏了、
+/// 权限没了……），那种仍然照旧报出来。
+fn is_past_end(err: &AudioError) -> bool {
+    match err {
+        AudioError::Io(err) => err.kind() == std::io::ErrorKind::UnexpectedEof,
+        AudioError::SeekOutOfRange(_) => true,
+        _ => false,
+    }
+}
+
 /// 取输出设备锁。锁中毒说明别处 panic 过，按设备错误上报而不是再 panic 一次。
 fn lock_output(
     output: &AudioOutputHandle,
@@ -681,9 +712,16 @@ fn handle_command(
                 // 「设备该不该跑」只认引擎此刻的状态：暂停中调歌词（点某一句跳过去）
                 // 之后设备必须仍然停在暂停上，否则点播放会对一条已经在跑的流再开一次。
                 let playing = *state == PlayerState::Playing;
-                if let Err(err) = current.seek(position_ms, playing, output) {
-                    shared.fail(err.to_string());
-                    *state = PlayerState::Failed;
+                match current.seek(position_ms, playing, output) {
+                    Ok(()) => {}
+                    // 跳到文件尾之后（文件没下完，标签 / 容器里的时长比实际数据长）：
+                    // 当作「这首到这儿就完了」。用户把进度条拖到最后要的就是换下一首，
+                    // 弹一条错误把播放卡住反而是坏行为——真机上就是这么踩到的。
+                    Err(err) if is_past_end(&err) => current.finish(),
+                    Err(err) => {
+                        shared.fail(err.to_string());
+                        *state = PlayerState::Failed;
+                    }
                 }
             }
         }
@@ -881,6 +919,13 @@ mod tests {
         let path = dir.join(name);
         write_wav(&path, seconds);
         QueueItem::new(id, path.to_string_lossy().to_string())
+    }
+
+    /// 仓库里那份「没下完」的样本：头部声明 4 秒，实际只有约 2 秒数据。
+    ///
+    /// 见 `rust/testdata/README.md`，由 `testdata/generate.sh` 用 ffmpeg 生成后入库。
+    fn truncated_mp3() -> String {
+        format!("{}/../testdata/truncated.mp3", env!("CARGO_MANIFEST_DIR"))
     }
 
     /// 播完一首自动接下一首，全部播完后状态回到 Stopped。
@@ -1248,6 +1293,113 @@ mod tests {
             "应从头开始往前走：{:?}",
             engine.snapshot()
         );
+    }
+
+    /// 文件没下完（标签 / 容器里的时长比文件里实际的数据长）时，把进度条拖到最后
+    /// 会跳到「不存在的那一段」上：这一首该当作放完了、让队列接着往下走，
+    /// 而不是弹一条错误把播放卡住。
+    ///
+    /// 回归用例：真机上用户看到的是「播不了：文件系统错误: unexpected end of file」，
+    /// 而且那首歌会一直卡在那儿。样本 `testdata/truncated.mp3` 声明 4 秒、
+    /// 实际只有约 2 秒数据，跳到 2.5 秒必定落到缺失的那一段。
+    #[test]
+    fn seek_past_truncated_data_ends_track_instead_of_failing() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+        engine
+            .replace_queue(
+                vec![
+                    QueueItem::new(1, truncated_mp3()),
+                    wav_item(temp.path(), "next.wav", 30, 2),
+                ],
+                0,
+                true,
+            )
+            .expect("入队并播放");
+
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > 0),
+            "没下完的文件，已有的那部分应该照常播：{:?}",
+            engine.snapshot()
+        );
+
+        engine.seek(2_500).expect("跳转口令");
+
+        assert!(
+            pump_until(&output, 5_000, || engine.snapshot().track_id == 2),
+            "该当作这首放完了、接着放下一首，而不是停在这一首上：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(
+            engine.snapshot().error,
+            None,
+            "跳到文件尾之后不该被记成播放错误：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(engine.snapshot().state, PlayerState::Playing);
+    }
+
+    /// 目标连容器声明的时长都超了（标签里的时长比容器还长时就是这样）：同样当作
+    /// 「这首到头了」，不报错。
+    #[test]
+    fn seek_beyond_declared_duration_ends_track_instead_of_failing() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+        engine
+            .replace_queue(
+                vec![
+                    QueueItem::new(1, truncated_mp3()),
+                    wav_item(temp.path(), "next.wav", 30, 2),
+                ],
+                0,
+                true,
+            )
+            .expect("入队并播放");
+
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > 0),
+            "没下完的文件，已有的那部分应该照常播：{:?}",
+            engine.snapshot()
+        );
+
+        // 样本容器声明 4 秒，60 秒连声明范围都超了。
+        engine.seek(60_000).expect("跳转口令");
+
+        assert!(
+            pump_until(&output, 5_000, || engine.snapshot().track_id == 2),
+            "超范围的目标也该当作这首放完了：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(
+            engine.snapshot().error,
+            None,
+            "超范围不该被记成播放错误：{:?}",
+            engine.snapshot()
+        );
+    }
+
+    /// 「跳过头了」只认这两种；别的失败（权限、解码器坏）仍然要如实报错。
+    #[test]
+    fn only_past_end_seek_errors_count_as_end_of_stream() {
+        let eof = AudioError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "unexpected end of file",
+        ));
+        assert!(is_past_end(&eof), "文件里没这段数据：当作放完了");
+        assert!(
+            is_past_end(&AudioError::SeekOutOfRange("超了".to_string())),
+            "目标超出容器声明范围：同样当作放完了"
+        );
+
+        let denied = AudioError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "permission denied",
+        ));
+        assert!(!is_past_end(&denied), "权限问题不能当成放完了");
+        assert!(!is_past_end(&AudioError::Decode("解码器坏了".to_string())));
+        assert!(!is_past_end(&AudioError::Device("设备没了".to_string())));
     }
 
     /// 文件被截断（下载没下完之类）：能播的部分照播，播完就当这首结束，

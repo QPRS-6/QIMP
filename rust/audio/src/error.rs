@@ -18,6 +18,14 @@ pub enum AudioError {
     #[error("解码失败: {0}")]
     Decode(String),
 
+    /// 跳转目标超出容器声明的范围。
+    ///
+    /// 与「文件里实际的数据比声明时长短」（下载没下完、拷贝被掐断）是同一类问题：
+    /// 用户把进度条拖到最后就会落到这儿。播放层不把它当成播放错误，而是当作
+    /// 「这一首到头了」，见 `engine.rs` 的 `is_past_end`。
+    #[error("跳转目标超出文件范围: {0}")]
+    SeekOutOfRange(String),
+
     #[error("音频设备错误: {0}")]
     Device(String),
 
