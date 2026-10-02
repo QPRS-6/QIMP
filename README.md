@@ -60,6 +60,23 @@ cd app && flutter analyze && flutter test
 cd app/android && ./gradlew :app:testDebugUnitTest
 ```
 
+## 打出来的 APK 有两类（都在 `app/build/app/outputs/flutter-apk/`）
+
+| 产物 | 内容 | 用在哪 |
+| --- | --- | --- |
+| `app-<abi>-<mode>.apk`（v7 / v8 / x86_64 各一份） | 只带自己那一份 `.so` | **手机装这个**：release 下约 20–26 MB，比 universal 少背另外两份 |
+| `app-<mode>.apk` | 三个 ABI 都在里面 | 不确定机型、分发给别人：release 下约 69 MB |
+
+先看手机是哪个 ABI（绝大多数手机是 `arm64-v8a`）：
+
+```bash
+adb shell getprop ro.product.cpu.abi
+adb install -r app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+```
+
+换装另一种产物直接 `-r` 覆盖即可（签名相同，曲库与设置都保留）；三种产物文件名不同，
+互不覆盖，可以一直放在同一个目录里。
+
 ## 权限说明（重要）
 
 - **Android 11+ 必须授予“所有文件访问”**（`MANAGE_EXTERNAL_STORAGE`）。原因：核心扫描器基于

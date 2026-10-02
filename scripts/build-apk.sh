@@ -5,6 +5,10 @@
 # 默认的 cargokit 插件），所以 `flutter build apk` 不会自己编译 Rust。
 # 忘记先编 .so 的后果是：APK 能装能开，但一调用 FFI 就崩。
 #
+# 一次打两种产物：
+#   app-<abi>-<mode>.apk   按 ABI 分开：每个只带自己那一份 .so，体积最小 —— **手机装这个**
+#   app-<mode>.apk         universal：三个 ABI 都在里面，给不确定机型 / 分发给别人用
+#
 # 用法：
 #   scripts/build-apk.sh              # debug APK（默认）
 #   scripts/build-apk.sh --release    # release APK
@@ -49,12 +53,27 @@ echo "==> [1/2] 编译 Rust：${ABIS[*]}"
 )
 
 MODE="${1:---debug}"
-echo "==> [2/2] 打包 APK：$MODE"
+FLUTTER_MODE="${MODE#--}"
+OUT="$ROOT/app/build/app/outputs/flutter-apk"
+
+# 按 ABI 分开打：每个 APK 只带自己那一份 .so（libflutter + libapp + libmusicplayer_ffi
+# 各一份就有十几 MB，三个 ABI 全塞进一个包，等于让每台手机白背另外两份）。
+# 两种产物的文件名不一样，互不覆盖，可以共存于同一个输出目录。
+echo "==> [2/3] 按 ABI 分开打包：${ABIS[*]}"
+(
+  cd "$ROOT/app"
+  flutter build apk "$MODE" --split-per-abi
+)
+
+echo "==> [3/3] 再打一份 universal（三个 ABI 都带）"
 (
   cd "$ROOT/app"
   flutter build apk "$MODE"
 )
 
 echo
-echo "完成。产物：$ROOT/app/build/app/outputs/flutter-apk/"
-ls -la "$ROOT/app/build/app/outputs/flutter-apk/" | grep -i '\.apk' || true
+echo "完成。产物：$OUT"
+ls -la "$OUT" | grep -i '\.apk' || true
+echo
+echo "手机装对应的那一份即可（大多数手机是 arm64-v8a）："
+echo "  adb install -r $OUT/app-arm64-v8a-$FLUTTER_MODE.apk"
