@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标（Android 8+ 用这一份，老系统继续用 mipmap-*/ic_launcher.png）：
+  底色单独一层，图案单独一层——所以图案（那圈外环）在生成时就已经缩进安全区了，
+  见 scripts/icon/gen-icon.sh。改图案请改 scripts/icon/qimp-icon.svg 再跑那个脚本，
+  不要手改 PNG。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

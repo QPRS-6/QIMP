@@ -9,4 +9,8 @@
     <color name="widget_icon">#FFFFFFFF</color>
     <!-- 主题色（与 App 的 teal 种子色一致）：随机 / 循环打开时用它点亮。 -->
     <color name="widget_icon_active">#FF4DB6AC</color>
+
+    <!-- 应用图标的底色（自适应图标 background 那一层）。粉圈与音符在
+         mipmap-*/ic_launcher_foreground.png 里，稿子见 scripts/icon/qimp-icon.svg。 -->
+    <color name="ic_launcher_background">#FFFFFFFF</color>
 </resources>
