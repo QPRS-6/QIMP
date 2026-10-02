@@ -34,10 +34,9 @@ pub enum RepeatMode {
     All,
     /// 单曲循环（只在“自然播完”时生效，用户手动点下一首仍然换歌）。
     ///
-    /// **随机播放开着时它让位**：随机本来就没有“顺序”，把同一首无限循环，等于
-    /// 把列表里别的歌全锁在门外——用户看到的是「随机也开着、循环也开着，却一直
-    /// 只有这一首」。那种情况下按**列表循环**办：一轮把列表放完，再自动重开一轮
-    /// （见 [`PlayQueue::advance`]）。想单独循环某一首，先把随机关掉。
+    /// **随机播放不影响它**：随机管的是「下一首是谁」，而自然播完时根本没有「下一首」
+    /// 这回事——那就重复这一首。想「一轮之内不重复地放完整个列表」，把循环切到
+    /// **列表循环**（那是它本来的一档），别指望单曲循环替它办。
     One,
 }
 
@@ -234,14 +233,16 @@ impl PlayQueue {
     /// `auto = true` 表示“当前这首自然播完了”，此时才应用单曲循环；
     /// `auto = false` 表示用户主动点了下一首，即便在单曲循环下也应该换歌。
     ///
-    /// **随机会把单曲循环顶掉**（`auto` 那一路）：随机里没有“下一首是谁”的顺序，
-    /// 把同一首无限循环就等于列表里别的歌再也放不到。所以随机下按列表循环办——
-    /// 一轮之内不重复地放完列表，再自动重开一轮（`advance_shuffled` 那边负责重开）。
+    /// **随机播放不改变这条规则**：随机只决定「下一首是谁」，而自然播完时压根没有
+    /// 「下一首」这回事——单曲循环就是把这一首再放一遍。原来随机开着时会把单曲循环
+    /// 顶掉（改成按列表循环走），理由是不想「把列表里别的歌锁在门外」；但那个行为
+    /// 本来就有自己的一档（「随机 + 列表循环」），按钮上写「单曲循环」就该循环这一首，
+    /// 否则用户只会觉得这个按钮坏了。
     pub fn advance(&mut self, auto: bool) -> Option<&QueueItem> {
         if self.items.is_empty() {
             return None;
         }
-        if auto && self.repeat == RepeatMode::One && !self.shuffle {
+        if auto && self.repeat == RepeatMode::One {
             return self.current();
         }
         if self.shuffle {
@@ -263,9 +264,9 @@ impl PlayQueue {
     ///
     /// 从**本轮还没放过的**曲目里抽一首——随机播放的完整语义就是「一轮之内不重复」。
     /// 一轮放完时再看循环模式：**只要循环不是「关闭」就重开一轮**——随机的“一轮”
-    /// 里每首都只放一次，所以「列表循环」与「单曲循环」在这里是同一件事
-    /// （单曲循环在随机下让位，见 [`PlayQueue::advance`]）；否则返回 `None`
-    /// （与顺序播放「播完最后一首就停」保持一致）。
+    /// 里每首都只放一次，所以走到轮末时「列表循环」与「单曲循环」都是同一件事
+    /// （单曲循环只在**自然播完**时生效，见 [`PlayQueue::advance`]；能走到轮末说明是
+    /// 用户手动点的「下一首」）；否则返回 `None`（与顺序播放「播完最后一首就停」一致）。
     fn advance_shuffled(&mut self) -> Option<&QueueItem> {
         // 回退过的历史里可能已经没有当前这首了，先记回去：
         // 否则「上一首」会在回退一次之后就突然断掉。
@@ -274,8 +275,7 @@ impl PlayQueue {
             .filter(|&i| i != self.index && !self.played.contains(&i))
             .collect();
         if candidates.is_empty() {
-            // 只有「关闭」才停：列表循环 / 单曲循环都重开一轮——列表放完自动接着放，
-            // 这也是用户要的「随机 + 单曲循环时，把列表放完再自动重播」。
+            // 只有「关闭」才停：列表循环 / 单曲循环都重开一轮——列表放完自动接着放。
             if self.repeat == RepeatMode::Off {
                 return None;
             }
@@ -455,36 +455,20 @@ mod tests {
     }
 
     #[test]
-    fn shuffle_ignores_single_repeat_on_natural_end() {
+    fn shuffle_keeps_single_repeat_on_natural_end() {
         let mut q = shuffled(&["a", "b", "c"], 11);
         q.set_repeat(RepeatMode::One);
 
         let current = q.current().expect("队列非空").id;
-        // 自然播完：随机下**不能**留在原地——留在这里的话列表里别的歌永远轮不到，
-        // 也就永远走不到「一轮放完再重播」。
-        let next = q.advance(true).expect("本轮还有别的歌").id;
-        assert_ne!(next, current);
-        // 手动点下一首：照样随机换歌。
-        assert_ne!(q.advance(false).map(|i| i.id), Some(next));
-    }
-
-    #[test]
-    fn shuffle_restarts_cycle_when_repeat_one() {
-        let mut q = shuffled(&["a", "b", "c"], 5);
-        q.set_repeat(RepeatMode::One);
-
-        // 自然播完一路走：本轮三首都该放到，中途不该停。
-        let mut seen = vec![q.current().expect("队列非空").id];
-        for _ in 0..2 {
-            let id = q.advance(true).expect("一轮还没放完，应该还有下一首").id;
-            assert!(!seen.contains(&id), "一轮之内不该重复放：{id}");
-            seen.push(id);
+        // 自然播完：随机下也要留在原地——「单曲循环」就是这一首再放一遍，
+        // 随机只决定「下一首是谁」，而这里没有「下一首」这回事。
+        for _ in 0..3 {
+            assert_eq!(q.advance(true).map(|i| i.id), Some(current));
+            assert_eq!(q.index(), 0, "位置不该动");
         }
-        assert_eq!(seen.len(), 3, "随机 + 单曲循环也该把列表放完一遍");
 
-        // 列表放完了：单曲循环在随机下 = 重开一轮，而不是停下来。
-        let next = q.advance(true).expect("随机 + 循环开着就该一直放下去").id;
-        assert!(seen.contains(&next), "新一轮还是从列表里挑：{next}");
+        // 手动点下一首：仍然随机换歌（与顺序播放下的单曲循环一致）。
+        assert_ne!(q.advance(false).map(|i| i.id), Some(current));
     }
 
     #[test]

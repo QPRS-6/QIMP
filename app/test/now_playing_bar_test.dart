@@ -186,9 +186,10 @@ void main() {
     expect(_shuffleButton(tester).tooltip, '随机播放：开（点击关闭）');
   });
 
-  testWidgets('随机开着时，单曲循环的提示会说明它按列表循环走', (tester) async {
-    // 随机 + 单曲循环时，真正说话的是随机（见 `rust/audio` 的 PlayQueue::advance）：
-    // 列表一轮放完会自动重开一轮，而不是同一首无限循环。提示里得说清楚。
+  testWidgets('循环模式的提示：单曲循环就是单曲循环，随机开着也一样', (tester) async {
+    // 随机只管「下一首是谁」；自然播完时没有「下一首」这回事，所以「随机 + 单曲循环」
+    // 就是重复当前这一首（见 `rust/audio` 的 PlayQueue::advance）。文案上不必再解释
+    // 什么——按钮写「单曲循环」就该循环这一首。
     Future<void> pump(RepeatMode mode, {required bool shuffle}) =>
         tester.pumpWidget(
           _harness(
@@ -198,16 +199,12 @@ void main() {
         );
 
     await pump(RepeatMode.one, shuffle: true);
-    expect(
-      _repeatButton(tester).tooltip,
-      '循环：单曲循环（随机下按列表循环走，点击切换）',
-    );
+    expect(_repeatButton(tester).tooltip, '循环：单曲循环（点击切换）');
 
-    // 关掉随机：回到普通文案（这时单曲循环才真的循环这一首）。
     await pump(RepeatMode.one, shuffle: false);
     expect(_repeatButton(tester).tooltip, '循环：单曲循环（点击切换）');
 
-    // 另外两种模式不受随机影响。
+    // 另外两种模式也不受随机影响。
     await pump(RepeatMode.all, shuffle: true);
     expect(_repeatButton(tester).tooltip, '循环：列表循环（点击切换）');
     await pump(RepeatMode.off, shuffle: true);

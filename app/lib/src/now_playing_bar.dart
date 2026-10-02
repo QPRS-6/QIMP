@@ -112,7 +112,6 @@ class NowPlayingBar extends StatelessWidget {
                   ),
                   RepeatButton(
                     mode: snapshot.repeat,
-                    shuffle: snapshot.shuffle,
                     onPressed: onCycleRepeat,
                   ),
                 ],

@@ -686,7 +686,6 @@ class _PlayerPageState extends State<PlayerPage> {
         ),
         RepeatButton(
           mode: snapshot?.repeat ?? RepeatMode.off,
-          shuffle: snapshot?.shuffle ?? false,
           onPressed: widget.onCycleRepeat,
         ),
       ],
