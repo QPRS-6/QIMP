@@ -394,7 +394,14 @@ class PlaybackService : Service() {
         }
     }
 
+    /**
+     * 通知渠道。渠道是 **API 26（Android 8.0）** 才有的东西，而本 App 的 minSdk 是 24：
+     * Android 7.x 上这三个 API 根本不存在，不判版本会直接 `NoSuchMethodError` 把这个前台
+     * 服务带崩——现象是「歌在放、通知栏却空着」，最难查。低版本上渠道这个概念本来也没有，
+     * 直接跳过就行（通知照样能挂上去）。
+     */
     private fun ensureChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java)
         if (manager.getNotificationChannel(CHANNEL_ID) == null) {
             val channel = NotificationChannel(

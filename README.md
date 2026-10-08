@@ -544,6 +544,18 @@ RemoteViews 自己撑开，2×1 与 4×1 没有任何区别。
   `services.gradle.org` 在本机连接超时，`mirrors.cloud.tencent.com/gradle/` 正常。
 - 首次 `flutter build apk` 会下载 Gradle 9.3.1 + AGP 9.1.0 + Kotlin 依赖（约数 GB、十余分钟），
   之后增量构建在秒级。
+- **minSdk 就是 24（Android 7.0），别再往下调**：Flutter 3.47 的引擎自己按 API 24 编的——
+  `libflutter.so` 的 `.note.android.ident` 写着 24，还引用了 `__fwrite_chk`（**API 24 才进
+  libc** 的 FORTIFY 符号）。拿 API 23 模拟器实测过：`minSdk = 23` 的包在 Android 6.0 上
+  装得上、一启动就 `dlopen failed: cannot locate symbol "__fwrite_chk"`；同一份代码在
+  Android 7.0 上正常。而且 Flutter 的 `MinSdkVersionMigration` 每次 `flutter build` 都会把
+  模块 `build.gradle.kts` 里 `minSdk = 16..23` 一律改回 `minSdk = flutter.minSdkVersion`
+  ——想写死 23 也留不住（除非绕一层变量，但那只是绕开迁移，改不了引擎的事实）。
+- **API 26+ 的调用必须包版本判断**（minSdk 24 就意味着 Android 7.x 在支持范围内）：
+  典型例子是通知渠道——`NotificationChannel` / `getNotificationChannel` /
+  `createNotificationChannel` 都是 26 才有的，漏了 `SDK_INT >= O` 的判断，在 7.x 上就是
+  `NoSuchMethodError` 把前台服务带崩，现象是「歌在放、通知栏却空着」（见
+  `PlaybackService.ensureChannel`）。
 - **C++ 运行时必须自己链**（`rust/ffi/build.rs`）：Oboe 是 C++ 库，而 cargo 在 Android 上用 NDK 的
   `clang`（C 驱动）做最终链接，不会像 `clang++` 那样自动带上 libc++。少了这一步，`.so` 里会留下
   `__cxa_pure_virtual` 这类未解析符号，**编得过、装得上，一启动就 `dlopen failed`**。
