@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize,
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ringbuf::traits::Producer;
 use ringbuf::{HeapCons, HeapProd};
@@ -439,6 +439,38 @@ impl Drop for Engine {
     }
 }
 
+/// 两次「设备换了，重开一条流」之间至少隔这么久。
+///
+/// 蓝牙在连上 / 断开的过程中可能来回切几次设备（A2DP 与 SCO 之间反复），不放个闸门就会
+/// 变成「开流 → 立刻又被系统关掉 → 再开流」的循环：白耗电，声音也一直抖。
+const REOPEN_COOLDOWN: Duration = Duration::from_millis(500);
+
+/// 底层那条流是不是已经被系统关掉了（见 [`AudioOutput::needs_reopen`]）。
+///
+/// 拿不到设备锁时当作「没事」：真要开流的时候还会再撞一次，那时候报错也不迟。
+fn needs_reopen(output: &AudioOutputHandle) -> bool {
+    lock_output(output)
+        .map(|guard| guard.needs_reopen())
+        .unwrap_or(false)
+}
+
+/// 把会话接到**新的一条**输出流上（系统关掉旧流之后）。
+///
+/// 为什么不能只重试 `resume`：设备换了之后那条流永远不会再启动，原地重试只会一直报错。
+/// `seek` 走的是「另建一对环形缓冲 + 重新开一条流」，也就是**切歌**走的那段路——用户报的
+/// 「得切一首歌才能播」正好说明那条路是好的，这里把它接过来用。
+///
+/// 位置取**当前播出位置**：用户听到的是「换个设备接着放」，而不是从头开始（进度条也不会
+/// 往回跳）。`playing` 原样传下去：暂停中换设备之后重开，那条新流同样得按在暂停上。
+fn reopen_on_new_device(
+    session: &mut Session,
+    playing: bool,
+    output: &AudioOutputHandle,
+) -> Result<()> {
+    let position_ms = session.position_ms();
+    session.seek(position_ms, playing, output)
+}
+
 /// 开一条输出流，并把它设成与引擎状态一致的「跑 / 停」；返回设备那边的已播帧计数。
 ///
 /// 为什么要多这一步：`AudioOutput::start` 开的流**一定**是跑着的（设备侧接口就是如此，
@@ -643,8 +675,21 @@ fn handle_command(
         Command::Play => {
             if session.is_none() {
                 play_current(queue, session, state, shared, output);
-            } else {
-                match lock_output(output).and_then(|mut guard| guard.resume()) {
+            } else if let Some(current) = session.as_mut() {
+                // 设备换过（蓝牙连上 / 断开、拔耳机）之后旧流已经被系统关掉：直接按当前位置
+                // 重开一条，别拿 `resume` 去撞一条关掉的流——那条流再也不会启动，撞出来的
+                // 正是用户看到的「点了播放播不了，得切一首歌才能听」。
+                let started = if needs_reopen(output) {
+                    reopen_on_new_device(current, true, output)
+                } else {
+                    match lock_output(output).and_then(|mut guard| guard.resume()) {
+                        Ok(()) => Ok(()),
+                        // 没打标记也失败（老机型走 OpenSL ES 时不一定有错误回调）：
+                        // 一样按当前位置重开一条再试，重开也失败才把原来的错误报出去。
+                        Err(err) => reopen_on_new_device(current, true, output).map_err(|_| err),
+                    }
+                };
+                match started {
                     Ok(()) => {
                         shared.clear_error();
                         *state = PlayerState::Playing;
@@ -755,6 +800,8 @@ fn run(rx: Receiver<Command>, shared: Arc<Shared>, output: AudioOutputHandle) {
     let mut state = PlayerState::Stopped;
     let mut session: Option<Session> = None;
     let mut quit = false;
+    // 上一次「设备换了、重开流」是什么时候（见 [`REOPEN_COOLDOWN`]）。
+    let mut last_reopen: Option<Instant> = None;
 
     while !quit {
         // 1) 先把积压的指令处理完：用户的点击优先于继续解码。
@@ -783,6 +830,26 @@ fn run(rx: Receiver<Command>, shared: Arc<Shared>, output: AudioOutputHandle) {
         }
         if quit {
             break;
+        }
+
+        // 播放中设备被换掉（蓝牙连上、声音切到别的输出）时系统会把这条流关掉：接着解码
+        // 只是往一条没人取的缓冲里灌——进度冻住、也没有声音，用户只能切歌。这里主动接上
+        // 新设备，他听到的就只是「声音从那台音箱里出来了」。
+        //
+        // 断开（而不是接上）时不走这条：平台侧会先自动暂停（见 `PlaybackAutoStop`），
+        // 那时候状态已经不是 Playing 了，这里也就不会把声音接到外放上。
+        if state == PlayerState::Playing
+            && needs_reopen(&output)
+            && last_reopen.is_none_or(|at| at.elapsed() >= REOPEN_COOLDOWN)
+        {
+            if let Some(current) = session.as_mut() {
+                last_reopen = Some(Instant::now());
+                if let Err(err) = reopen_on_new_device(current, true, &output) {
+                    shared.fail(err.to_string());
+                    state = PlayerState::Failed;
+                    stop_playback(&mut session, &output);
+                }
+            }
         }
 
         // 2) 推进当前曲目。
@@ -895,6 +962,19 @@ mod tests {
         match guard.as_any_mut().downcast_mut::<NullOutput>() {
             Some(null) => null.is_paused(),
             None => false,
+        }
+    }
+
+    /// 模拟「系统换了音频输出设备」：正在跑的那条流被系统关掉。
+    ///
+    /// 真机上只有插拔蓝牙耳机 / 音箱、换音频路由的时候才会发生，宿主机上靠它复现
+    /// （见 `NullOutput::simulate_device_change`）。
+    fn simulate_device_change(output: &AudioOutputHandle) {
+        let Ok(mut guard) = output.lock() else {
+            return;
+        };
+        if let Some(null) = guard.as_any_mut().downcast_mut::<NullOutput>() {
+            null.simulate_device_change();
         }
     }
 
@@ -1277,6 +1357,81 @@ mod tests {
             "应从头开始往前走：{:?}",
             engine.snapshot()
         );
+    }
+
+    /// 蓝牙断开（或刚连上）之后**点播放**：旧流已经被系统关掉，必须按当前位置重开一条。
+    ///
+    /// 用户报的两个症状都在这一条上：断开之后再点播放播不了、刚连上也不能播，非切歌不可。
+    /// 修之前 `resume` 撞的是一条关掉的流，只会把「播不了」留在快照里；修之后引擎自己
+    /// 走切歌那条路（另建缓冲 + 重开流），接着响。
+    #[test]
+    fn play_after_device_change_reopens_the_stream() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+        engine
+            .replace_queue(vec![wav_item(temp.path(), "long.wav", 30, 13)], 0, true)
+            .expect("播放");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > 0),
+            "进度应开始增长：{:?}",
+            engine.snapshot()
+        );
+
+        // 蓝牙一断，平台侧会先自动暂停，系统随后把那条流关掉。
+        engine.pause().expect("暂停");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().state
+                == PlayerState::Paused),
+            "应进入暂停状态：{:?}",
+            engine.snapshot()
+        );
+        let frozen = engine.snapshot().position_ms;
+        simulate_device_change(&output);
+
+        // 点播放：从冻住的位置接着响，而且不该留下任何错误。
+        engine.play().expect("播放");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().state
+                == PlayerState::Playing),
+            "设备换了之后点播放也该响：{:?}",
+            engine.snapshot()
+        );
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > frozen),
+            "应从当前位置接着往前走：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(engine.snapshot().error, None, "换设备不是错误");
+    }
+
+    /// 播放中蓝牙连上（声音该从那台音箱出来）：引擎自己接上新设备，音乐接着走。
+    ///
+    /// 不接的话就是用户那种「没声音、进度也不动，只能切歌」：旧流被关掉之后没人取缓冲，
+    /// 引擎还在 Playing 上白解码。
+    #[test]
+    fn keeps_playing_after_device_change_while_playing() {
+        let temp = tempfile::tempdir().expect("临时目录");
+        let output = manual_output();
+        let engine = Engine::new(Arc::clone(&output)).expect("创建引擎");
+        engine
+            .replace_queue(vec![wav_item(temp.path(), "long.wav", 30, 13)], 0, true)
+            .expect("播放");
+        assert!(
+            pump_until(&output, 3_000, || engine.snapshot().position_ms > 0),
+            "进度应开始增长：{:?}",
+            engine.snapshot()
+        );
+
+        let before = engine.snapshot().position_ms;
+        simulate_device_change(&output);
+        assert!(
+            pump_until(&output, 5_000, || engine.snapshot().position_ms > before),
+            "换设备之后位置该接着往前走：{:?}",
+            engine.snapshot()
+        );
+        assert_eq!(engine.snapshot().state, PlayerState::Playing);
+        assert_eq!(engine.snapshot().error, None, "换设备不是错误");
     }
 
     /// 文件没下完（标签 / 容器里的时长比文件里实际的数据长）时，把进度条拖到最后

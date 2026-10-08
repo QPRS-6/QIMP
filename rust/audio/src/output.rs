@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use ringbuf::traits::{Consumer, Observer, Split};
 use ringbuf::{HeapCons, HeapProd, HeapRb};
 
-use crate::error::Result;
+use crate::error::{AudioError, Result};
 
 /// 输出设备的共享句柄：播放线程用它开流/暂停，FFI 侧的测试用它手动泵采样。
 pub type AudioOutputHandle = Arc<Mutex<Box<dyn AudioOutput>>>;
@@ -53,6 +53,20 @@ pub trait AudioOutput: Send {
     /// 已播出帧数的共享计数器：音频线程累加，引擎只读（不加锁）。
     fn played_frames(&self) -> Arc<AtomicU64>;
 
+    /// 底层那条流已经被系统关掉了吗——关掉了就必须重开一条，而不是把错误丢给用户。
+    ///
+    /// 具体到 Android：**蓝牙连上 / 断开、拔耳机**这类「音频输出设备换了」的时刻，系统会把
+    /// 正在跑的那条流关掉（Oboe 的 `on_error_after_close`，文档里写明这个回调就是用来
+    /// 「在另一台设备上重开一条流」的）。关掉之后的流既 `start` 不了也 `pause` 不了，
+    /// 引擎只重试 `resume` 就会一直报错——用户看到的是「点播放没声音，切一首歌才能听」
+    /// （切歌会重新开流，所以那一下总是好的）。
+    ///
+    /// 引擎拿到 `true` 之后走的是「按当前位置重开一条」（见 `engine::reopen_on_new_device`）。
+    /// 默认 `false`：不出声的那个测试实现、以及没有设备的情形都没有这一说。
+    fn needs_reopen(&self) -> bool {
+        false
+    }
+
     /// 向下转型入口：测试要对手动泵采样的实现做具体类型操作，
     /// 生产代码也可用它查询设备能力（例如判断当前是不是真实设备）。
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
@@ -81,6 +95,8 @@ pub struct NullOutput {
     spec: Option<OutputSpec>,
     /// 暂停时不再取走采样——真实设备在暂停时同样不会回调音频线程。
     paused: bool,
+    /// 模拟「系统把这条流关掉了」（换音频输出设备）。见 [`Self::simulate_device_change`]。
+    needs_reopen: bool,
 }
 
 impl Default for NullOutput {
@@ -97,6 +113,7 @@ impl NullOutput {
             played: Arc::new(AtomicU64::new(0)),
             spec: None,
             paused: false,
+            needs_reopen: false,
         }
     }
 
@@ -109,9 +126,20 @@ impl NullOutput {
         self.paused
     }
 
+    /// 模拟「系统换了音频输出设备」：正在跑的那条流被系统关掉。
+    ///
+    /// 真机上这件事只在插拔蓝牙耳机 / 音箱、换音频路由的时候发生，宿主机上没法复现；
+    /// 靠它才能把 `engine` 里那几条路测出来（蓝牙断开后点播放、播放中蓝牙连上、
+    /// 断开时自动暂停）。关掉之后 [`Self::pump`] 不再取走采样——真实设备也一样，
+    /// 「播到哪儿」就冻在原地。
+    pub fn simulate_device_change(&mut self) {
+        self.needs_reopen = true;
+    }
+
     /// 模拟音频线程取走 `frames` 帧；返回真正取到的采样数（队列里不够就少于请求）。
     pub fn pump(&mut self, frames: usize) -> usize {
-        if self.paused {
+        // 流已经被系统关掉：设备不会再回调，引擎也就推进不动。
+        if self.paused || self.needs_reopen {
             return 0;
         }
         let Some(consumer) = self.consumer.as_mut() else {
@@ -140,17 +168,26 @@ impl AudioOutput for NullOutput {
         self.samples_per_frame = spec.samples_per_frame();
         self.spec = Some(spec);
         self.paused = false;
+        // 重开一条流：设备换了这件事就此翻篇（跟真设备上那条新流一样）。
+        self.needs_reopen = false;
         // 与真实设备一致：新的一次播放从 0 开始计帧。
         self.played.store(0, Ordering::Relaxed);
         Ok(())
     }
 
     fn pause(&mut self) -> Result<()> {
+        // 流已经被系统关掉时它本来就不出声，「暂停成功」是实话：蓝牙断开时平台侧会
+        // 自动暂停，这条路上冒一个「暂停失败」只会吓人（与 Oboe 那边的处理一致）。
         self.paused = true;
         Ok(())
     }
 
     fn resume(&mut self) -> Result<()> {
+        // 与 Oboe 一致：关掉的流不会再启动，这里也报错，好让引擎走
+        // 「按当前位置重开一条」那条路（见 [`AudioOutput::needs_reopen`]）。
+        if self.needs_reopen {
+            return Err(AudioError::Device("音频输出设备已切换".to_string()));
+        }
         self.paused = false;
         Ok(())
     }
@@ -163,6 +200,10 @@ impl AudioOutput for NullOutput {
 
     fn played_frames(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.played)
+    }
+
+    fn needs_reopen(&self) -> bool {
+        self.needs_reopen
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -220,5 +261,35 @@ mod tests {
 
         out.stop();
         assert_eq!(out.pump(10), 0, "关流后不应再取走采样");
+    }
+
+    /// 设备换了（系统关了那条流）之后的样子：`resume` 报错、`pause` 成功、采样一帧都不取。
+    ///
+    /// 这三条正是引擎判断「该重开一条了」的依据，也是「蓝牙断开后再点播放」那条路的起点。
+    #[test]
+    fn device_change_marks_the_stream_for_reopening() {
+        let spec = OutputSpec {
+            sample_rate: 8_000,
+            channels: 1,
+        };
+        let (mut first, consumer) = ring_buffer(spec);
+        let mut out = NullOutput::new();
+        out.start(spec, consumer).expect("开流");
+        first.push_slice(&[0.0; 10]);
+        assert_eq!(out.pump(10), 10, "新流正常出声");
+        assert!(!out.needs_reopen(), "刚开的流是好的");
+
+        out.simulate_device_change();
+        assert!(out.needs_reopen(), "系统关了流：引擎该重开一条");
+        assert!(out.resume().is_err(), "关掉的流不会再启动");
+        assert!(out.pause().is_ok(), "它本来就不出声，暂停算成功");
+        assert_eq!(out.pump(10), 0, "设备不会再回调，一帧都不该被取走");
+
+        // 重开一条新流就算翻篇：标记清掉，采样重新被取走。
+        let (mut second, consumer) = ring_buffer(spec);
+        out.start(spec, consumer).expect("重开一条");
+        assert!(!out.needs_reopen());
+        second.push_slice(&[0.0; 10]);
+        assert_eq!(out.pump(10), 10);
     }
 }
