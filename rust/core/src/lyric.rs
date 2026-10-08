@@ -3,11 +3,25 @@
 //! 支持：
 //! - `[mm:ss]` / `[mm:ss.xx]` / `[mm:ss.xxx]` 三种时间精度
 //! - 一行多时间戳（`[00:10.00][01:20.00]同一句`）
+//! - **逐字时间轴**（增强型 LRC：`[00:12.00]<00:12.00>今天 <00:12.40>天气 <00:13.10>不错`），
+//!   见 [`LyricWord`]；没有逐字标记的行照旧整行一条
 //! - `[offset:-500]` 全局偏移（毫秒，正数表示歌词提前）
 //! - `[ti:]` `[ar:]` `[al:]` 等元信息标签（忽略但不报错）
 //! - CRLF 换行、无时间戳的纯文本行（跳过）
 
 use serde::{Deserialize, Serialize};
+
+/// 逐字歌词里的一小段：一段文字 + 它的起始时间。
+///
+/// 只有**带逐字标记**的行才会有这个列表；没有标记的行 `words` 为空，
+/// 界面按整行高亮（老样子）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LyricWord {
+    /// 起始时间（毫秒，已应用 offset）。
+    pub time_ms: u64,
+    /// 这一段的文字（不含时间标记本身）。
+    pub text: String,
+}
 
 /// 一条带时间轴的歌词。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,6 +29,11 @@ pub struct LyricLine {
     /// 起始时间（毫秒，已应用 offset）。
     pub time_ms: u64,
     pub text: String,
+    /// 逐字时间轴；空表示这一行没有逐字信息。
+    ///
+    /// 约定：所有 `words` 拼起来等于这一行的原文——同一时间戳的**译文**是合并进
+    /// `text`（用 `\n` 连接）的，它没有自己的逐字信息，所以 `words` 只覆盖第一段。
+    pub words: Vec<LyricWord>,
 }
 
 /// 解析结果：排序后的时间轴 + 元信息。
@@ -80,14 +99,29 @@ pub fn parse_lrc(raw: &str) -> Lyrics {
         if times.is_empty() {
             continue;
         }
-        let text = text.trim().to_string();
+        let text = text.trim();
         if text.is_empty() {
             continue;
         }
+        // 逐字标记要**先**剥掉再判断空：`[00:12.00]<00:12.00>` 这种只有标记没有文字的行
+        // 不该算一句。
+        let segments = split_word_timestamps(text, times[0]);
+        if segments.iter().all(|segment| segment.1.is_empty()) {
+            continue;
+        }
+        let first_time = times[0];
         for time_ms in times {
+            let line_time = apply_offset(time_ms, offset_ms);
+            // 同一句被多个时间戳复用时（`[00:10][01:20]…<00:12.00>…`），逐字时间要整体
+            // 后移同样的量，否则第二次“唱”的时候那串时间早就过去了。
+            let shift = time_ms as i64 - first_time as i64;
             lyrics.lines.push(LyricLine {
-                time_ms: apply_offset(time_ms, offset_ms),
-                text: text.clone(),
+                time_ms: line_time,
+                text: segments
+                    .iter()
+                    .map(|(_, text)| text.as_str())
+                    .collect::<String>(),
+                words: words_of(&segments, line_time, offset_ms, shift),
             });
         }
     }
@@ -105,6 +139,9 @@ pub fn parse_lrc(raw: &str) -> Lyrics {
 ///
 /// 入参必须已按时间排序（[parse_lrc] 里就是这么调过来的）；排序是稳定的，
 /// 所以同一个时间点上的多行会保持它们在文件里的先后顺序——原文在前、翻译在后。
+///
+/// **只并文本**：`words` 保持第一条那份不动。逐字时间轴属于原文，译文没有自己的
+/// 逐字信息，把它拼进来只会让「唱到哪个字」算错。
 fn merge_same_time(lines: Vec<LyricLine>) -> Vec<LyricLine> {
     let mut merged: Vec<LyricLine> = Vec::with_capacity(lines.len());
     for line in lines {
@@ -133,12 +170,90 @@ pub fn parse_plain(raw: &str) -> Lyrics {
         .map(|line| LyricLine {
             time_ms: 0,
             text: line.to_string(),
+            // 纯文本没有时间轴，自然也谈不上逐字。
+            words: Vec::new(),
         })
         .collect();
     Lyrics {
         lines,
         ..Lyrics::default()
     }
+}
+
+/// 把行正文按逐字标记切成 `(该段的起始时间, 文字)` 段。
+///
+/// 标记形式是 `<mm:ss.xx>`，也就是增强型 LRC（LRC A2 扩展）——国内外的播放器
+/// （QQ 音乐、MusicBee、foobar2000 的歌词插件等）导出的逐字歌词基本都是这个写法。
+/// 第一个标记**之前**的文字归这一行自己的时间戳，之后每段归该标记的时间。
+///
+/// 底线：**不是合法时间戳的 `<` 原样当文字**。歌词里出现「<」并不罕见（比如数学符号），
+/// 宁可少认一个标记，也不能把用户看到的字吃掉。
+fn split_word_timestamps(text: &str, line_time: u64) -> Vec<(u64, String)> {
+    let mut segments: Vec<(u64, String)> = Vec::new();
+    let mut current_time = line_time;
+    let mut buffer = String::new();
+    let mut rest = text;
+
+    while let Some(open) = rest.find('<') {
+        // 标记之前的文字先收进当前这一段。
+        buffer.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        // 没有收尾的 `>`：从这个 '<' 往后都当普通文字（把 rest 清掉，免得再找一遍）。
+        let Some(close) = after.find('>') else {
+            buffer.push_str(&rest[open..]);
+            rest = "";
+            continue;
+        };
+        match parse_timestamp(&after[..close]) {
+            Some(time_ms) => {
+                // 收下这一段，从这个时间点开始新的一段。
+                segments.push((current_time, std::mem::take(&mut buffer)));
+                current_time = time_ms;
+                rest = &after[close + 1..];
+            }
+            None => {
+                // 不是时间戳：把这个 '<' 当普通字符，继续往后找下一个。
+                buffer.push('<');
+                rest = after;
+            }
+        }
+    }
+
+    buffer.push_str(rest);
+    segments.push((current_time, buffer));
+    segments
+}
+
+/// 把分段变成逐字时间轴。
+///
+/// - 只有一段（也就是没有任何逐字标记）→ 返回空，这一行按整行高亮；
+/// - 空段（`<>` 连着 `<>`）丢掉：没有字就没有“唱到哪”可言；
+/// - `shift` 是「同一句被多个时间戳复用」时的整体后移量；
+/// - 时间**单调不减**：逐字标记写错时不能让进度往回跳，界面上那一行会来回闪。
+fn words_of(
+    segments: &[(u64, String)],
+    line_time: u64,
+    offset_ms: i64,
+    shift: i64,
+) -> Vec<LyricWord> {
+    if segments.len() < 2 {
+        return Vec::new();
+    }
+    let mut words: Vec<LyricWord> = Vec::with_capacity(segments.len());
+    let mut last = line_time;
+    for (time_ms, text) in segments {
+        if text.is_empty() {
+            continue;
+        }
+        let shifted = (*time_ms as i64 + shift).max(0) as u64;
+        let time_ms = apply_offset(shifted, offset_ms).max(last);
+        last = time_ms;
+        words.push(LyricWord {
+            time_ms,
+            text: text.clone(),
+        });
+    }
+    words
 }
 
 fn fill_meta(line: &str, lyrics: &mut Lyrics) {
@@ -260,6 +375,119 @@ mod tests {
         assert_eq!(lyrics.lines[0].time_ms, 10_000);
         assert_eq!(lyrics.lines[1].time_ms, 80_000);
         assert!(lyrics.lines.iter().all(|l| l.text == "Repeated chorus"));
+    }
+
+    /// 逐字（增强型 LRC）：`[mm:ss.xx]<mm:ss.xx>词<mm:ss.xx>词…`。
+    #[test]
+    fn parses_word_level_timeline() {
+        let lyrics = parse_lrc("[00:12.00]<00:12.00>今天 <00:12.40>天气 <00:13.10>不错");
+        let line = &lyrics.lines[0];
+
+        assert_eq!(line.time_ms, 12_000);
+        assert_eq!(
+            line.text, "今天 天气 不错",
+            "标记要剥掉，文字要连起来（词间的空格得留着）"
+        );
+        assert_eq!(
+            line.words
+                .iter()
+                .map(|w| (w.time_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(12_000, "今天 "), (12_400, "天气 "), (13_100, "不错")],
+            "每段的起始时间要认对"
+        );
+    }
+
+    /// 没有逐字标记的行 `words` 为空——界面照旧整行高亮。
+    #[test]
+    fn plain_lines_have_no_words() {
+        let lyrics = parse_lrc("[00:01.00]整句歌词");
+        assert!(lyrics.lines[0].words.is_empty());
+    }
+
+    /// 逐字标记里的时间也要跟着 `[offset:]` 一起走。
+    #[test]
+    fn word_timeline_follows_global_offset() {
+        let lyrics = parse_lrc("[offset:-500]\n[00:12.00]<00:12.00>甲<00:13.00>乙");
+        let words = &lyrics.lines[0].words;
+        assert_eq!(words[0].time_ms, 11_500);
+        assert_eq!(words[1].time_ms, 12_500);
+    }
+
+    /// 同一句被多个时间戳复用时，逐字时间整体后移（第二次也得逐字亮起来）。
+    #[test]
+    fn word_timeline_shifts_for_repeated_line() {
+        let lyrics = parse_lrc("[00:10.00][01:20.00]<00:10.00>甲<00:11.00>乙");
+        assert_eq!(lyrics.lines.len(), 2);
+        assert_eq!(lyrics.lines[0].words[0].time_ms, 10_000);
+        assert_eq!(lyrics.lines[1].time_ms, 80_000, "第二遍从 1:20 开始");
+        assert_eq!(
+            lyrics.lines[1].words[0].time_ms, 80_000,
+            "逐字时间要跟着这一遍的行首，而不是还停在 0:10"
+        );
+        assert_eq!(lyrics.lines[1].words[1].time_ms, 81_000);
+    }
+
+    /// `<` 不是时间戳时原样当文字：宁可少认一个标记，也不能把字吃掉。
+    #[test]
+    fn keeps_angle_brackets_that_are_not_timestamps() {
+        let lyrics = parse_lrc("[00:01.00]a<b>c<00:02.00>d");
+        assert_eq!(lyrics.lines[0].text, "a<b>cd");
+        assert_eq!(
+            lyrics.lines[0]
+                .words
+                .iter()
+                .map(|w| (w.time_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(1_000, "a<b>c"), (2_000, "d")],
+            "认不出来的尖括号原样留在文字里，只切在真正的时间标记上"
+        );
+
+        // 只有一半的尖括号也一样：整段当文字，不吞字。
+        let broken = parse_lrc("[00:01.00]前半 <00:02.00");
+        assert_eq!(broken.lines[0].text, "前半 <00:02.00");
+        assert!(broken.lines[0].words.is_empty(), "这不是合法的逐字行");
+    }
+
+    /// 逐字时间写错（比行首还早 / 前后颠倒）时按单调不减修好，别让进度来回跳。
+    #[test]
+    fn clamps_word_timeline_to_be_monotonic() {
+        let lyrics = parse_lrc("[00:10.00]<00:05.00>早<00:10.50>中<00:10.20>晚");
+        let words = &lyrics.lines[0].words;
+
+        assert_eq!(words[0].time_ms, 10_000, "比行首还早的按行首算");
+        assert_eq!(words[1].time_ms, 10_500);
+        assert_eq!(
+            words[2].time_ms, 10_500,
+            "倒退的那一段夹到前一段的时间上（位置不动，字照样显示）"
+        );
+        assert!(
+            words
+                .windows(2)
+                .all(|pair| pair[0].time_ms <= pair[1].time_ms),
+            "时间必须单调不减"
+        );
+    }
+
+    /// 只有逐字标记、没有文字的行不算一句；空段（`<>` 相邻）直接丢掉。
+    #[test]
+    fn drops_empty_word_segments_and_empty_lines() {
+        let lyrics = parse_lrc("[00:01.00]<00:01.00>\n[00:02.00]<00:02.00><00:02.50>甲");
+        assert_eq!(lyrics.lines.len(), 1, "只有标记没有文字的行不该留下");
+        assert_eq!(lyrics.lines[0].text, "甲");
+        assert_eq!(lyrics.lines[0].words.len(), 1);
+        assert_eq!(lyrics.lines[0].words[0].time_ms, 2_500);
+    }
+
+    /// 同一时间戳的译文并进 `text`，但不并进 `words`（逐字信息只属于原文）。
+    #[test]
+    fn translation_joins_text_but_not_words() {
+        let lyrics = parse_lrc("[00:10.00]<00:10.00>原文\n[00:10.00]translation");
+        let line = &lyrics.lines[0];
+
+        assert_eq!(line.text, "原文\ntranslation");
+        assert_eq!(line.words.len(), 1);
+        assert_eq!(line.words[0].text, "原文");
     }
 
     /// 同一个时间点的两句是**同一条**（双语歌词：原文 + 翻译），文本里用换行分开。

@@ -91,6 +91,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<LyricLine> dco_decode_list_lyric_line(dynamic raw);
 
   @protected
+  List<LyricWord> dco_decode_list_lyric_word(dynamic raw);
+
+  @protected
   List<Playlist> dco_decode_list_playlist(dynamic raw);
 
   @protected
@@ -110,6 +113,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   LyricLine dco_decode_lyric_line(dynamic raw);
+
+  @protected
+  LyricWord dco_decode_lyric_word(dynamic raw);
 
   @protected
   Lyrics dco_decode_lyrics(dynamic raw);
@@ -267,6 +273,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<LyricLine> sse_decode_list_lyric_line(SseDeserializer deserializer);
 
   @protected
+  List<LyricWord> sse_decode_list_lyric_word(SseDeserializer deserializer);
+
+  @protected
   List<Playlist> sse_decode_list_playlist(SseDeserializer deserializer);
 
   @protected
@@ -286,6 +295,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   LyricLine sse_decode_lyric_line(SseDeserializer deserializer);
+
+  @protected
+  LyricWord sse_decode_lyric_word(SseDeserializer deserializer);
 
   @protected
   Lyrics sse_decode_lyrics(SseDeserializer deserializer);
@@ -469,6 +481,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_lyric_word(
+    List<LyricWord> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_playlist(List<Playlist> self, SseSerializer serializer);
 
   @protected
@@ -497,6 +515,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_lyric_line(LyricLine self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_lyric_word(LyricWord self, SseSerializer serializer);
 
   @protected
   void sse_encode_lyrics(Lyrics self, SseSerializer serializer);

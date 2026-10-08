@@ -2159,6 +2159,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<LyricWord> dco_decode_list_lyric_word(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_lyric_word).toList();
+  }
+
+  @protected
   List<Playlist> dco_decode_list_playlist(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_playlist).toList();
@@ -2198,9 +2204,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   LyricLine dco_decode_lyric_line(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return LyricLine(
+      timeMs: dco_decode_CastedPrimitive_u_64(arr[0]),
+      text: dco_decode_String(arr[1]),
+      words: dco_decode_list_lyric_word(arr[2]),
+    );
+  }
+
+  @protected
+  LyricWord dco_decode_lyric_word(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
     if (arr.length != 2)
       throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
-    return LyricLine(
+    return LyricWord(
       timeMs: dco_decode_CastedPrimitive_u_64(arr[0]),
       text: dco_decode_String(arr[1]),
     );
@@ -2690,6 +2709,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<LyricWord> sse_decode_list_lyric_word(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <LyricWord>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_lyric_word(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<Playlist> sse_decode_list_playlist(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
@@ -2756,7 +2787,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_timeMs = sse_decode_CastedPrimitive_u_64(deserializer);
     var var_text = sse_decode_String(deserializer);
-    return LyricLine(timeMs: var_timeMs, text: var_text);
+    var var_words = sse_decode_list_lyric_word(deserializer);
+    return LyricLine(timeMs: var_timeMs, text: var_text, words: var_words);
+  }
+
+  @protected
+  LyricWord sse_decode_lyric_word(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_timeMs = sse_decode_CastedPrimitive_u_64(deserializer);
+    var var_text = sse_decode_String(deserializer);
+    return LyricWord(timeMs: var_timeMs, text: var_text);
   }
 
   @protected
@@ -3294,6 +3334,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_lyric_word(
+    List<LyricWord> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_lyric_word(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_playlist(List<Playlist> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
@@ -3359,6 +3411,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_lyric_line(LyricLine self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_CastedPrimitive_u_64(self.timeMs, serializer);
+    sse_encode_String(self.text, serializer);
+    sse_encode_list_lyric_word(self.words, serializer);
+  }
+
+  @protected
+  void sse_encode_lyric_word(LyricWord self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_CastedPrimitive_u_64(self.timeMs, serializer);
     sse_encode_String(self.text, serializer);

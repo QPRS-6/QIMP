@@ -29,10 +29,30 @@ Track fakeTrack({
 
 /// 假歌词：`(起始毫秒, 文本)` 列表 → 一份**带时间轴**的歌词。
 ///
-/// 纯文本歌词（内嵌歌词的常见形态）用 [fakePlainLyrics]。
+/// 纯文本歌词（内嵌歌词的常见形态）用 [fakePlainLyrics]；逐字歌词用 [fakeWordLyrics]。
 Lyrics fakeLyrics(List<(int, String)> lines) => Lyrics(
   lines: [
-    for (final (timeMs, text) in lines) LyricLine(timeMs: timeMs, text: text),
+    for (final (timeMs, text) in lines)
+      LyricLine(timeMs: timeMs, text: text, words: const []),
+  ],
+  offsetMs: 0,
+  synced: true,
+);
+
+/// 假逐字歌词：`(行起始毫秒, [(词起始毫秒, 词), …])`。
+///
+/// 逐字时间轴对应增强型 LRC 的 `<mm:ss.xx>`（解析在 Rust 的 `core::lyric`）。
+Lyrics fakeWordLyrics(List<(int, List<(int, String)>)> lines) => Lyrics(
+  lines: [
+    for (final (timeMs, words) in lines)
+      LyricLine(
+        timeMs: timeMs,
+        text: words.map((word) => word.$2).join(),
+        words: [
+          for (final (wordMs, text) in words)
+            LyricWord(timeMs: wordMs, text: text),
+        ],
+      ),
   ],
   offsetMs: 0,
   synced: true,
@@ -40,7 +60,10 @@ Lyrics fakeLyrics(List<(int, String)> lines) => Lyrics(
 
 /// 假歌词：没有时间轴的那一种（整段文字）。
 Lyrics fakePlainLyrics(List<String> lines) => Lyrics(
-  lines: [for (final text in lines) LyricLine(timeMs: 0, text: text)],
+  lines: [
+    for (final text in lines)
+      LyricLine(timeMs: 0, text: text, words: const []),
+  ],
   offsetMs: 0,
   synced: false,
 );

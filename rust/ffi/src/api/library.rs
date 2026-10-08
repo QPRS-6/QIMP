@@ -31,7 +31,7 @@ pub use musicplayer_core::{
     ResumeQueue, ScanMode, ScanSummary, SortKey, SortOrder, Stats, Track,
 };
 // 歌词类型也要出现在 pub 签名里（`track_lyrics` 的返回值），所以同样显式导出。
-pub use musicplayer_core::lyric::{LyricLine, Lyrics};
+pub use musicplayer_core::lyric::{LyricLine, LyricWord, Lyrics};
 
 /// 进程内唯一的曲库句柄；`None` 表示尚未打开。
 static DB: Mutex<Option<Db>> = Mutex::new(None);
@@ -631,12 +631,22 @@ pub struct _ScanSummary {
     pub errors: Vec<String>,
 }
 
+/// [`musicplayer_core::lyric::LyricWord`] 的镜像：逐字歌词里的一小段。
+#[frb(mirror(LyricWord))]
+pub struct _LyricWord {
+    /// 起始时间（毫秒）。
+    pub time_ms: u64,
+    pub text: String,
+}
+
 /// [`musicplayer_core::lyric::LyricLine`] 的镜像：一行歌词。
 #[frb(mirror(LyricLine))]
 pub struct _LyricLine {
     /// 起始时间（毫秒）；不同步的歌词里统一是 0。
     pub time_ms: u64,
     pub text: String,
+    /// 逐字时间轴；空表示这一行没有逐字信息（界面按整行高亮）。
+    pub words: Vec<LyricWord>,
 }
 
 /// [`musicplayer_core::lyric::Lyrics`] 的镜像。

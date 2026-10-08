@@ -47,6 +47,57 @@ String? expectedLrcPath(String? trackPath) {
   return '${trackPath.substring(0, dot)}.lrc';
 }
 
+/// 逐字歌词：把一行的文字按当前位置切成 `(片段, 已唱)`。
+///
+/// 只有**带逐字时间轴**的行（`line.words` 非空，即增强型 LRC 的 `<mm:ss.xx>`）才有
+/// 内容；普通行返回空列表，界面照旧整行高亮。
+///
+/// 几条规则：
+/// - 一个词内部按**字数**插值切一刀：逐字时间轴给的是「每个词什么时候开始」，
+///   长词（比如一整句英文）不切的话会一秒里猛跳一下；切在 runes 上，
+///   别把代理对劈成乱码。词尾那个空格也算一个字，所以它总是这一段里最后才亮的。
+/// - 词与词之间的缝隙（还没轮到下一段的那些文字）算未唱。
+/// - 拼起来等于 `line.text`：译文那段（合并进来的第二行）没有自己的逐字信息，
+///   一律算未唱。
+/// - 数据对不上（`words` 拼出来不是 `line.text` 的开头）时返回空列表——
+///   宁可整行高亮，也不要显示一行拼错的字。
+List<(String, bool)> karaokeRuns(LyricLine line, int positionMs) {
+  final words = line.words;
+  if (words.isEmpty) return const <(String, bool)>[];
+  final wordsText = words.map((word) => word.text).join();
+  if (!line.text.startsWith(wordsText)) return const <(String, bool)>[];
+
+  final runs = <(String, bool)>[];
+  // 空片段不输出：切在词首/词尾时会切出一个空串，留着只会产生空的 TextSpan。
+  void add(String text, bool sung) {
+    if (text.isNotEmpty) runs.add((text, sung));
+  }
+
+  for (var i = 0; i < words.length; i++) {
+    final word = words[i];
+    if (positionMs < word.timeMs) {
+      add(word.text, false);
+      continue;
+    }
+    // 下一段的开始时间就是这一段的结束；最后一段没有结束时间，整段算已唱。
+    final nextStart = i + 1 < words.length ? words[i + 1].timeMs : null;
+    if (nextStart == null || positionMs >= nextStart) {
+      add(word.text, true);
+      continue;
+    }
+    final span = nextStart - word.timeMs;
+    final done = (positionMs - word.timeMs).clamp(0, span);
+    final units = word.text.runes.toList();
+    final cut = span == 0 ? units.length : (units.length * done / span).round();
+    add(String.fromCharCodes(units.take(cut)), true);
+    add(String.fromCharCodes(units.skip(cut)), false);
+  }
+
+  // 译文（合并进来、`words` 没覆盖的那一段）算未唱。
+  add(line.text.substring(wordsText.length), false);
+  return runs;
+}
+
 /// 歌词页。
 ///
 /// 三件事：带时间轴的高亮 + 自动滚动（点一句能跳过去）、纯文本歌词的静态展示、
@@ -226,26 +277,57 @@ class _LyricsViewState extends State<LyricsView> {
               child: Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Text(
-                    line.text,
-                    textAlign: TextAlign.center,
-                    // 同一时间戳的两行歌词合成了一条，行数按它给，别被截掉。
-                    maxLines: lineCount,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      // 行高压紧一点，两条双语歌词才装得进两格。
-                      height: 1.25,
-                      color: isActive
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurfaceVariant,
-                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
+                  child: isActive && line.words.isNotEmpty
+                      // 逐字歌词：唱到的字用主题色、没唱到的用弱化色。
+                      ? _karaokeText(theme, line)
+                      : Text(
+                          line.text,
+                          textAlign: TextAlign.center,
+                          // 同一时间戳的两行歌词合成了一条，行数按它给，别被截掉。
+                          maxLines: lineCount,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            // 行高压紧一点，两条双语歌词才装得进两格。
+                            height: 1.25,
+                            color: isActive
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurfaceVariant,
+                            fontWeight: isActive
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
+                        ),
                 ),
               ),
             ),
           );
         },
+      ),
+    );
+  }
+
+  /// 当前这一行按逐字时间轴渲染：唱到的字用主题色、没唱到的用弱化色。
+  ///
+  /// 整行的**字重保持不变**（只有颜色在动）：逐字改字重会让字宽跳动，一行字会跟着
+  /// 左右抖。行尾那段（译文）本来就没有逐字信息，由 [karaokeRuns] 归到「未唱」里。
+  Widget _karaokeText(ThemeData theme, LyricLine line) {
+    final runs = karaokeRuns(line, widget.positionMs);
+    final sung = theme.colorScheme.primary;
+    return Text.rich(
+      TextSpan(
+        children: [
+          for (final (text, isSung) in runs)
+            // 未唱的不设颜色：跟着下面 style 里的弱化色走。
+            TextSpan(text: text, style: isSung ? TextStyle(color: sung) : null),
+        ],
+      ),
+      textAlign: TextAlign.center,
+      maxLines: lyricLineCount(line.text),
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.titleMedium?.copyWith(
+        height: 1.25,
+        color: theme.colorScheme.onSurfaceVariant,
+        fontWeight: FontWeight.w600,
       ),
     );
   }

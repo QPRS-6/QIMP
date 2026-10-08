@@ -347,7 +347,35 @@ class LyricLine {
   final int timeMs;
   final String text;
 
-  const LyricLine({required this.timeMs, required this.text});
+  /// 逐字时间轴；空表示这一行没有逐字信息（界面按整行高亮）。
+  final List<LyricWord> words;
+
+  const LyricLine({
+    required this.timeMs,
+    required this.text,
+    required this.words,
+  });
+
+  @override
+  int get hashCode => timeMs.hashCode ^ text.hashCode ^ words.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LyricLine &&
+          runtimeType == other.runtimeType &&
+          timeMs == other.timeMs &&
+          text == other.text &&
+          words == other.words;
+}
+
+/// [`musicplayer_core::lyric::LyricWord`] 的镜像：逐字歌词里的一小段。
+class LyricWord {
+  /// 起始时间（毫秒）。
+  final int timeMs;
+  final String text;
+
+  const LyricWord({required this.timeMs, required this.text});
 
   @override
   int get hashCode => timeMs.hashCode ^ text.hashCode;
@@ -355,7 +383,7 @@ class LyricLine {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is LyricLine &&
+      other is LyricWord &&
           runtimeType == other.runtimeType &&
           timeMs == other.timeMs &&
           text == other.text;

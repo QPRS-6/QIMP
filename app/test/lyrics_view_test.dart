@@ -268,4 +268,113 @@ void main() {
     expect(highlighted(tester, '甲'), isTrue, reason: '新歌该按自己的位置算');
     expect(highlighted(tester, '乙'), isFalse);
   });
+
+  // -------------------------------------------------------------------------
+  // 逐字歌词（增强型 LRC 的 `<mm:ss.xx>`，解析在 Rust 的 `core::lyric`）
+  // -------------------------------------------------------------------------
+
+  /// 一行逐字歌词：`今天 天气 不错`，每段各 500ms。
+  Lyrics wordLyrics() => fakeWordLyrics(<(int, List<(int, String)>)>[
+    (10_000, <(int, String)>[(10_000, '今天 '), (10_500, '天气 '), (11_000, '不错')]),
+  ]);
+
+  /// `karaokeRuns` 的结果摊平成 `(片段, 已唱)` 给人看。
+  List<(String, bool)> runsAt(int positionMs) {
+    final line = wordLyrics().lines[0];
+    return karaokeRuns(line, positionMs);
+  }
+
+  test('逐字：还没唱到的字算未唱，唱到的算已唱，词内按字数插值', () {
+    expect(
+      runsAt(9_999).map((run) => run.$2),
+      everyElement(isFalse),
+      reason: '这一行还没开始',
+    );
+
+    // 第一段（10.0s–10.5s）唱到 40%：`今天 ` 三个字（含词尾空格）里切在第一个字后。
+    expect(runsAt(10_200), [('今', true), ('天 ', false), ('天气 ', false), ('不错', false)]);
+    expect(
+      runsAt(10_500),
+      [('今天 ', true), ('天气 ', false), ('不错', false)],
+      reason: '正好到下一段：前一段整段算已唱',
+    );
+    expect(
+      runsAt(20_000),
+      [('今天 ', true), ('天气 ', true), ('不错', true)],
+      reason: '最后一段没有结束时间：一旦开始就整段算已唱',
+    );
+
+    // 片段拼起来永远是整行文字，一个字都不多不少。
+    for (final positionMs in [0, 10_250, 10_500, 11_200, 99_999]) {
+      expect(runsAt(positionMs).map((run) => run.$1).join(), '今天 天气 不错');
+    }
+  });
+
+  test('逐字：没有逐字时间轴的行不参与逐字渲染，数据对不上时整行高亮', () {
+    final plain = fakeLyrics(<(int, String)>[(10_000, '整句没有逐字')]).lines[0];
+    expect(karaokeRuns(plain, 10_500), isEmpty, reason: '普通行照旧整行高亮');
+
+    // 坏数据（words 拼出来跟 text 对不上）：宁可整行高亮，也别显示一行拼错的字。
+    final broken = LyricLine(
+      timeMs: 10_000,
+      text: '对不上的文字',
+      words: [LyricWord(timeMs: 10_000, text: '别的字')],
+    );
+    expect(karaokeRuns(broken, 10_500), isEmpty);
+  });
+
+  test('逐字：译文那段（words 没覆盖）算未唱', () {
+    final line = LyricLine(
+      timeMs: 10_000,
+      text: '原文\ntranslation',
+      words: [LyricWord(timeMs: 10_000, text: '原文')],
+    );
+    expect(karaokeRuns(line, 11_000), [('原文', true), ('\ntranslation', false)]);
+  });
+
+  testWidgets('逐字歌词：当前这一行按已唱 / 未唱分色渲染', (tester) async {
+    await tester.pumpWidget(
+      harness(lyrics: Future<Lyrics?>.value(wordLyrics()), positionMs: 10_200),
+    );
+    await tester.pumpAndSettle();
+
+    final rich = tester.widget<Text>(find.byType(Text).first);
+    final spans = (rich.textSpan as TextSpan).children!.cast<TextSpan>();
+    final theme = Theme.of(tester.element(find.byType(Text).first));
+
+    expect(
+      spans.map((span) => span.text).join(),
+      '今天 天气 不错',
+      reason: '逐字渲染不能改变这一行的文字',
+    );
+    expect(spans.first.text, '今');
+    expect(
+      spans.first.style?.color,
+      theme.colorScheme.primary,
+      reason: '唱到的字用主题色',
+    );
+    expect(
+      spans[1].style?.color,
+      isNull,
+      reason: '没唱到的字不设颜色，跟着整行的弱化色走',
+    );
+    expect(rich.style?.color, theme.colorScheme.onSurfaceVariant);
+  });
+
+  testWidgets('没有逐字时间轴的行照旧整行高亮，不换成富文本', (tester) async {
+    await tester.pumpWidget(
+      harness(
+        lyrics: Future<Lyrics?>.value(
+          fakeLyrics(<(int, String)>[(10_000, '整句没有逐字')]),
+        ),
+        positionMs: 10_250,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final text = tester.widget<Text>(find.text('整句没有逐字'));
+    expect(text.textSpan, isNull, reason: '普通行走原来的那条路');
+    final theme = Theme.of(tester.element(find.text('整句没有逐字')));
+    expect(text.style?.color, theme.colorScheme.primary, reason: '整行高亮');
+  });
 }
