@@ -4,7 +4,8 @@
 //! - `[mm:ss]` / `[mm:ss.xx]` / `[mm:ss.xxx]` 三种时间精度
 //! - 一行多时间戳（`[00:10.00][01:20.00]同一句`）
 //! - **逐字时间轴**（增强型 LRC：`[00:12.00]<00:12.00>今天 <00:12.40>天气 <00:13.10>不错`），
-//!   见 [`LyricWord`]；没有逐字标记的行照旧整行一条
+//!   见 [`LyricWord`]；标记的括号也认方括号 / 全角括号那几对，行尾补的那个收尾时间一并剥掉；
+//!   没有逐字标记的行照旧整行一条
 //! - `[offset:-500]` 全局偏移（毫秒，正数表示歌词提前）
 //! - `[ti:]` `[ar:]` `[al:]` 等元信息标签（忽略但不报错）
 //! - CRLF 换行、无时间戳的纯文本行（跳过）
@@ -180,40 +181,58 @@ pub fn parse_plain(raw: &str) -> Lyrics {
     }
 }
 
+/// 逐字标记的两侧括号：增强型 LRC 用尖括号，也有工具写**方括号**（`词[mm:ss.xx]`），
+/// 中文圈的文件里还混得进全角括号。四种都认——认错了有「不吞字」兜底（见下）。
+const WORD_MARKERS: [(char, char); 4] = [('<', '>'), ('[', ']'), ('＜', '＞'), ('［', '］')];
+
+/// 找离行首最近的一个「可能是逐字标记」的左括号，返回
+/// `(字节位置, 左括号, 它配对的右括号)`；一个左括号都没有就返回 `None`。
+fn find_word_marker(rest: &str) -> Option<(usize, char, char)> {
+    WORD_MARKERS
+        .iter()
+        .filter_map(|&(open, close)| rest.find(open).map(|at| (at, open, close)))
+        .min_by_key(|&(at, ..)| at)
+}
+
 /// 把行正文按逐字标记切成 `(该段的起始时间, 文字)` 段。
 ///
 /// 标记形式是 `<mm:ss.xx>`，也就是增强型 LRC（LRC A2 扩展）——国内外的播放器
 /// （QQ 音乐、MusicBee、foobar2000 的歌词插件等）导出的逐字歌词基本都是这个写法。
 /// 第一个标记**之前**的文字归这一行自己的时间戳，之后每段归该标记的时间。
 ///
-/// 底线：**不是合法时间戳的 `<` 原样当文字**。歌词里出现「<」并不罕见（比如数学符号），
-/// 宁可少认一个标记，也不能把用户看到的字吃掉。
+/// 现实里的两个花样：
+/// - 标记的括号还有别的写法：方括号（`[00:12.40]天气`）以及全角的那一对；
+/// - 时间常常写在**词后面、甚至整句末尾**（`…そっと消える[00:13.27]`）。它是标记不是歌词，
+///   剥掉之后就是一个空段、顺手丢掉——留在屏幕上就会明晃晃挂在句尾。
+///
+/// 底线：**不是合法时间戳的括号原样当文字**。歌词里出现「<」「[」并不罕见
+/// （数学符号、`[笑]` 这类记号），宁可少认一个标记，也不能把用户看到的字吃掉。
 fn split_word_timestamps(text: &str, line_time: u64) -> Vec<(u64, String)> {
     let mut segments: Vec<(u64, String)> = Vec::new();
     let mut current_time = line_time;
     let mut buffer = String::new();
     let mut rest = text;
 
-    while let Some(open) = rest.find('<') {
+    while let Some((open, open_char, close)) = find_word_marker(rest) {
         // 标记之前的文字先收进当前这一段。
         buffer.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        // 没有收尾的 `>`：从这个 '<' 往后都当普通文字（把 rest 清掉，免得再找一遍）。
-        let Some(close) = after.find('>') else {
+        let after = &rest[open + open_char.len_utf8()..];
+        // 找不到配对的右括号：从这个左括号往后都当普通文字（把 rest 清掉，免得再找一遍）。
+        let Some(end) = after.find(close) else {
             buffer.push_str(&rest[open..]);
             rest = "";
             continue;
         };
-        match parse_timestamp(&after[..close]) {
+        match parse_timestamp(&after[..end]) {
             Some(time_ms) => {
                 // 收下这一段，从这个时间点开始新的一段。
                 segments.push((current_time, std::mem::take(&mut buffer)));
                 current_time = time_ms;
-                rest = &after[close + 1..];
+                rest = &after[end + close.len_utf8()..];
             }
             None => {
-                // 不是时间戳：把这个 '<' 当普通字符，继续往后找下一个。
-                buffer.push('<');
+                // 不是时间戳（`[笑]`、`a<b` 之类）：把这个左括号当普通字符，继续往后找下一个。
+                buffer.push(open_char);
                 rest = after;
             }
         }
@@ -477,6 +496,67 @@ mod tests {
         assert_eq!(lyrics.lines[0].text, "甲");
         assert_eq!(lyrics.lines[0].words.len(), 1);
         assert_eq!(lyrics.lines[0].words[0].time_ms, 2_500);
+    }
+
+    /// 逐字标记也认方括号（有些工具写 `词[mm:ss.xx]`），**行尾**那个收尾时间同样要剥掉。
+    #[test]
+    fn parses_square_bracket_word_timestamps_and_masks_line_end_time() {
+        let lyrics = parse_lrc("[00:10.00]今天[00:10.40]天气[00:11.00]不错[00:12.00]");
+        let line = &lyrics.lines[0];
+
+        assert_eq!(
+            line.text, "今天天气不错",
+            "标记不能出现在屏幕上（行尾那个也不行）"
+        );
+        assert_eq!(
+            line.words
+                .iter()
+                .map(|w| (w.time_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(10_000, "今天"), (10_400, "天气"), (11_000, "不错")]
+        );
+    }
+
+    /// 真实文件里两种写法常常掺在一起：逐字用 `<…>`，行尾再补一个 `[…]` 的收尾时间。
+    /// 这正是用户在屏幕上看到句尾挂着 `[00:13.27]` 的那种文件。
+    #[test]
+    fn masks_trailing_tag_on_angle_bracket_lines() {
+        let lyrics =
+            parse_lrc("[00:09.93]<00:09.93>揺らめく<00:10.50>ハートそっと消える[00:13.27]");
+        let line = &lyrics.lines[0];
+
+        assert_eq!(line.time_ms, 9_930);
+        assert_eq!(line.text, "揺らめくハートそっと消える");
+        assert_eq!(
+            line.words
+                .iter()
+                .map(|w| (w.time_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(9_930, "揺らめく"), (10_500, "ハートそっと消える")]
+        );
+    }
+
+    /// 全角括号也认（中文圈的工具偶尔会写 `＜00:12.40＞` / `［00:12.40］`）。
+    #[test]
+    fn parses_full_width_word_markers() {
+        let angle = parse_lrc("[00:12.00]今天＜00:12.40＞天气");
+        assert_eq!(angle.lines[0].text, "今天天气");
+        assert_eq!(angle.lines[0].words.len(), 2);
+
+        let square = parse_lrc("[00:12.00]今天［00:12.40］天气");
+        assert_eq!(square.lines[0].text, "今天天气");
+        assert_eq!(square.lines[0].words.len(), 2);
+    }
+
+    /// 方括号这边的不吞字底线：认不出来就原样当文字（`[笑]` 不是时间戳，半个括号也不是）。
+    #[test]
+    fn keeps_square_brackets_that_are_not_timestamps() {
+        let lyrics = parse_lrc("[00:01.00]前奏[笑]<00:02.00>开始");
+        assert_eq!(lyrics.lines[0].text, "前奏[笑]开始");
+
+        let broken = parse_lrc("[00:01.00]前半 [00:02.00");
+        assert_eq!(broken.lines[0].text, "前半 [00:02.00");
+        assert!(broken.lines[0].words.is_empty(), "这不是合法的逐字行");
     }
 
     /// 同一时间戳的译文并进 `text`，但不并进 `words`（逐字信息只属于原文）。
